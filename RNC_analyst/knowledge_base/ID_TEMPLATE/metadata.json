@@ -1,0 +1,17 @@
+{
+  "case_id": "ID_TEMPLATE",
+  "cliente": "",
+  "documento": "",
+  "pedido": "",
+  "projeto": "",
+  "revisao": "",
+  "data_rnc": "",
+  "tipo_rnc": "",
+  "severidade": "",
+  "causa_raiz": "",
+  "acao_corretiva": "",
+  "acao_preventiva": "",
+  "paginas_relacionadas": [],
+  "tags_componentes": [],
+  "observacoes": ""
+}

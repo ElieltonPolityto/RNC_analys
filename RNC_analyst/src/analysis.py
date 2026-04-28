@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from .ai_providers import anthropic_provider, groq_provider, openai_provider
+from .case_base import build_cases_prompt_context
 from .pdf_tools import build_text_brief
 from .prompts import build_review_prompt
 
@@ -20,10 +21,19 @@ def analyze_project(
     file_name: str,
     pdf_summary: dict[str, Any],
     project_info: dict[str, str],
+    base_instructions: str = "",
+    similar_cases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    similar_cases = similar_cases or []
     text_brief = build_text_brief(pdf_summary)
-    prompt = build_review_prompt(project_info, text_brief)
-    local_findings = build_local_findings(pdf_summary, project_info)
+    similar_cases_context = build_cases_prompt_context(similar_cases)
+    prompt = build_review_prompt(
+        project_info,
+        text_brief,
+        base_instructions=base_instructions,
+        similar_cases_context=similar_cases_context,
+    )
+    local_findings = build_local_findings(pdf_summary, project_info, similar_cases)
 
     if provider == "Pre-analise local" or not api_key:
         return build_result(
@@ -34,6 +44,7 @@ def analyze_project(
             overall_risk=estimate_overall_risk(local_findings),
             findings=local_findings,
             provider_error="" if provider == "Pre-analise local" else "Chave de API nao informada.",
+            related_cases=similar_cases,
         )
 
     try:
@@ -72,6 +83,7 @@ def analyze_project(
             overall_risk=payload.get("overall_risk") or estimate_overall_risk(merged),
             findings=merged,
             provider_error="",
+            related_cases=similar_cases,
         )
     except Exception as exc:
         return build_result(
@@ -82,13 +94,17 @@ def analyze_project(
             overall_risk=estimate_overall_risk(local_findings),
             findings=local_findings,
             provider_error=str(exc),
+            related_cases=similar_cases,
         )
 
 
 def build_local_findings(
-    pdf_summary: dict[str, Any], project_info: dict[str, str]
+    pdf_summary: dict[str, Any],
+    project_info: dict[str, str],
+    similar_cases: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    similar_cases = similar_cases or []
     pages = pdf_summary.get("pages", [])
     critical_pages = pdf_summary.get("critical_pages", [])
     inferred = pdf_summary.get("inferred", {})
@@ -160,6 +176,25 @@ def build_local_findings(
             )
         )
 
+    for case in similar_cases[:5]:
+        severity = "media" if case.get("similarity") in {"alta", "media"} else "baixa"
+        findings.append(
+            make_finding(
+                severity=severity,
+                category="Historico RNC",
+                page=None,
+                evidence=(
+                    f"Caso historico {case.get('case_id')} com similaridade {case.get('similarity')} "
+                    f"(score {case.get('score')}). Tipo de RNC: {case.get('rnc_type') or 'nao informado'}."
+                ),
+                recommendation=(
+                    "Comparar o projeto atual com esse caso antes da liberacao. "
+                    f"Causa historica: {case.get('root_cause') or 'nao informada'}."
+                ),
+                confidence=float(case.get("score") or 0.4),
+            )
+        )
+
     for warning in pdf_summary.get("warnings", []):
         findings.append(
             make_finding(
@@ -216,7 +251,9 @@ def build_result(
     overall_risk: str,
     findings: list[dict[str, Any]],
     provider_error: str,
+    related_cases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    related_cases = related_cases or []
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "provider": provider,
@@ -226,6 +263,8 @@ def build_result(
         "overall_risk": overall_risk,
         "findings": findings,
         "provider_error": provider_error,
+        "related_cases": related_cases,
+        "related_cases_count": len(related_cases),
         "findings_count": len(findings),
         "max_severity": max_severity(findings),
     }
@@ -244,4 +283,3 @@ def max_severity(findings: list[dict[str, Any]]) -> str:
     if not findings:
         return "baixa"
     return max((item.get("severity", "baixa") for item in findings), key=lambda x: SEVERITY_ORDER.get(x, 0))
-

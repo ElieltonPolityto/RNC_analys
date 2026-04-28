@@ -11,6 +11,17 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.analysis import analyze_project
+from src.case_base import (
+    ensure_case_base,
+    index_all_cases,
+    init_case_tables,
+    list_case_dirs,
+    list_indexed_cases,
+    load_base_instructions,
+    prompt_hash,
+    save_base_instructions,
+    search_similar_cases,
+)
 from src.database import init_db, list_analyses, save_analysis
 from src.pdf_tools import ensure_runtime_dirs, parse_pdf_bytes, save_uploaded_pdf
 from src.report_writer import write_reports
@@ -18,6 +29,7 @@ from src.report_writer import write_reports
 
 BASE_DIR = Path(__file__).resolve().parent
 RUNTIME_DIRS = ensure_runtime_dirs(BASE_DIR)
+CASE_BASE_PATHS = ensure_case_base(BASE_DIR)
 DB_PATH = RUNTIME_DIRS["data"] / "rnc_analyst.db"
 
 
@@ -51,23 +63,30 @@ def cached_parse_pdf(file_bytes: bytes, file_name: str) -> dict[str, Any]:
 def main() -> None:
     load_dotenv(BASE_DIR / ".env")
     init_db(DB_PATH)
+    init_case_tables(DB_PATH)
 
     st.set_page_config(page_title="RNC Analyst", layout="wide")
     st.title("RNC Analyst")
     st.caption("Revisao preventiva de projetos eletricos antes do envio para producao.")
 
-    provider, model, api_key = render_sidebar()
-    tab_new, tab_history, tab_settings = st.tabs(["Nova analise", "Historico", "Configuracoes"])
+    provider, model, api_key, case_limit = render_sidebar()
+    tab_new, tab_case_base, tab_prompt, tab_history, tab_settings = st.tabs(
+        ["Nova analise", "Base RNC", "Prompt", "Historico", "Configuracoes"]
+    )
 
     with tab_new:
-        render_new_analysis(provider, model, api_key)
+        render_new_analysis(provider, model, api_key, case_limit)
+    with tab_case_base:
+        render_case_base()
+    with tab_prompt:
+        render_prompt_editor()
     with tab_history:
         render_history()
     with tab_settings:
         render_settings()
 
 
-def render_sidebar() -> tuple[str, str, str]:
+def render_sidebar() -> tuple[str, str, str, int]:
     st.sidebar.header("Analise")
     provider = st.sidebar.selectbox(
         "Provedor",
@@ -92,11 +111,19 @@ def render_sidebar() -> tuple[str, str, str]:
             st.sidebar.warning("Chave nao configurada. A analise sera local.")
 
     st.sidebar.divider()
+    case_limit = st.sidebar.slider(
+        "Casos historicos",
+        min_value=0,
+        max_value=8,
+        value=5,
+        help="Quantidade maxima de casos similares anexados ao prompt.",
+    )
+    st.sidebar.divider()
     st.sidebar.caption("PDFs, uploads, relatorios, banco local e .env nao sao enviados ao Git.")
-    return provider, model, api_key
+    return provider, model, api_key, case_limit
 
 
-def render_new_analysis(provider: str, model: str, api_key: str) -> None:
+def render_new_analysis(provider: str, model: str, api_key: str, case_limit: int) -> None:
     uploaded_file = st.file_uploader("Arquivo PDF do projeto", type=["pdf"])
     if not uploaded_file:
         st.info("Envie um PDF para iniciar a revisao preventiva.")
@@ -141,6 +168,13 @@ def render_new_analysis(provider: str, model: str, api_key: str) -> None:
 
     with st.spinner("Executando analise..."):
         upload_path = save_uploaded_pdf(file_bytes, uploaded_file.name, RUNTIME_DIRS["uploads"])
+        base_instructions = load_base_instructions(CASE_BASE_PATHS["instructions"])
+        similar_cases = search_similar_cases(
+            DB_PATH,
+            pdf_summary=pdf_summary,
+            project_info=project_info,
+            limit=case_limit,
+        )
         result = analyze_project(
             provider=provider,
             api_key=api_key,
@@ -149,6 +183,8 @@ def render_new_analysis(provider: str, model: str, api_key: str) -> None:
             file_name=uploaded_file.name,
             pdf_summary=pdf_summary,
             project_info=project_info,
+            base_instructions=base_instructions,
+            similar_cases=similar_cases,
         )
         report_paths = write_reports(
             reports_dir=RUNTIME_DIRS["reports"],
@@ -164,6 +200,8 @@ def render_new_analysis(provider: str, model: str, api_key: str) -> None:
             pdf_name=uploaded_file.name,
             upload_path=upload_path,
             report_paths=report_paths,
+            related_cases=similar_cases,
+            base_prompt=base_instructions,
         )
         analysis_id = save_analysis(DB_PATH, record)
 
@@ -213,6 +251,21 @@ def render_result(result: dict[str, Any], report_paths: dict[str, Path]) -> None
     st.subheader("Resumo")
     st.write(result.get("summary", ""))
 
+    related_cases = pd.DataFrame(result.get("related_cases", []))
+    if not related_cases.empty:
+        st.subheader("Casos historicos relacionados")
+        visible_columns = [
+            "case_id",
+            "similarity",
+            "score",
+            "rnc_type",
+            "severity",
+            "root_cause",
+            "preventive_action",
+        ]
+        existing_columns = [column for column in visible_columns if column in related_cases.columns]
+        st.dataframe(related_cases[existing_columns], use_container_width=True, hide_index=True)
+
     findings = pd.DataFrame(result.get("findings", []))
     if findings.empty:
         st.info("Nenhum apontamento registrado.")
@@ -248,6 +301,59 @@ def render_history() -> None:
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def render_case_base() -> None:
+    knowledge_base = CASE_BASE_PATHS["knowledge_base"]
+    indexed_cases = list_indexed_cases(DB_PATH)
+    case_dirs = list_case_dirs(knowledge_base)
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Pastas ID", len(case_dirs))
+    col2.metric("Casos indexados", len(indexed_cases))
+    col3.metric("Base local", knowledge_base.name)
+
+    st.code(str(knowledge_base))
+
+    if st.button("Indexar base", type="primary", use_container_width=True):
+        with st.spinner("Indexando casos historicos..."):
+            result = index_all_cases(DB_PATH, knowledge_base)
+        st.success(
+            f"Indexacao concluida: {result['ok']} ok, {result['warning']} alerta, {result['error']} erro."
+        )
+        st.json(result)
+
+    st.subheader("Casos encontrados")
+    if case_dirs:
+        st.dataframe(
+            pd.DataFrame({"case_id": [path.name for path in case_dirs], "pasta": [str(path) for path in case_dirs]}),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("Nenhuma pasta ID encontrada ainda.")
+
+    st.subheader("Indice atual")
+    if indexed_cases:
+        df = pd.DataFrame(indexed_cases)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum caso indexado ainda.")
+
+
+def render_prompt_editor() -> None:
+    instructions_path = CASE_BASE_PATHS["instructions"]
+    current = load_base_instructions(instructions_path)
+
+    col1, col2 = st.columns(2)
+    col1.metric("Hash atual", prompt_hash(current))
+    col2.metric("Arquivo", instructions_path.name)
+    st.code(str(instructions_path))
+
+    edited = st.text_area("Instrucoes base", value=current, height=420)
+    if st.button("Salvar prompt", type="primary", use_container_width=True):
+        save_base_instructions(instructions_path, edited)
+        st.success(f"Prompt salvo. Hash: {prompt_hash(edited)}")
+
+
 def render_settings() -> None:
     st.subheader("Arquivos locais")
     st.code(
@@ -256,6 +362,8 @@ def render_settings() -> None:
                 f"Banco SQLite: {DB_PATH}",
                 f"Uploads: {RUNTIME_DIRS['uploads']}",
                 f"Relatorios: {RUNTIME_DIRS['reports']}",
+                f"Base RNC: {CASE_BASE_PATHS['knowledge_base']}",
+                f"Prompt base: {CASE_BASE_PATHS['instructions']}",
                 f"Exemplo de ambiente: {BASE_DIR / '.env.example'}",
             ]
         )
@@ -278,6 +386,8 @@ def build_record(
     pdf_name: str,
     upload_path: Path,
     report_paths: dict[str, Path],
+    related_cases: list[dict[str, Any]],
+    base_prompt: str,
 ) -> dict[str, Any]:
     return {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -296,6 +406,9 @@ def build_record(
         "upload_path": str(upload_path),
         "report_xlsx_path": str(report_paths["xlsx"]),
         "report_md_path": str(report_paths["md"]),
+        "related_cases_json": json.dumps(related_cases, ensure_ascii=False),
+        "base_prompt_hash": prompt_hash(base_prompt),
+        "base_prompt_path": str(CASE_BASE_PATHS["instructions"]),
         "result_json": json.dumps(result, ensure_ascii=False),
         "pdf_summary_json": json.dumps(
             {
@@ -314,4 +427,3 @@ def build_record(
 
 if __name__ == "__main__":
     main()
-

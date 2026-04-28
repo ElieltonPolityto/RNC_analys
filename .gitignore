@@ -15,6 +15,17 @@ RNC_analyst/data/
 RNC_analyst/uploads/
 RNC_analyst/reports/
 
+# Local RNC case base. Keep real customer projects/RNCs out of Git.
+RNC_analyst/knowledge_base/**
+!RNC_analyst/knowledge_base/
+!RNC_analyst/knowledge_base/_README.md
+!RNC_analyst/knowledge_base/ID_TEMPLATE/
+!RNC_analyst/knowledge_base/ID_TEMPLATE/README.md
+!RNC_analyst/knowledge_base/ID_TEMPLATE/metadata.json
+!RNC_analyst/knowledge_base/ID_TEMPLATE/observacoes.txt
+
 # Confidential project documents
 *.pdf
 *.PDF
+*.dwg
+*.DWG

@@ -46,6 +46,8 @@ def ensure_runtime_dirs(base_dir: Path) -> dict[str, Path]:
         "data": base_dir / "data",
         "uploads": base_dir / "uploads",
         "reports": base_dir / "reports",
+        "knowledge_base": base_dir / "knowledge_base",
+        "prompts": base_dir / "prompts",
     }
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)

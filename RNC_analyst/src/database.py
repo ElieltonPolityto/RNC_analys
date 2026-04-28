@@ -25,17 +25,38 @@ CREATE TABLE IF NOT EXISTS analyses (
     upload_path TEXT,
     report_xlsx_path TEXT,
     report_md_path TEXT,
+    related_cases_json TEXT,
+    base_prompt_hash TEXT,
+    base_prompt_path TEXT,
     result_json TEXT NOT NULL,
     pdf_summary_json TEXT NOT NULL
 );
 """
 
 
+ANALYSIS_EXTRA_COLUMNS = {
+    "related_cases_json": "TEXT",
+    "base_prompt_hash": "TEXT",
+    "base_prompt_path": "TEXT",
+}
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
         conn.execute(SCHEMA)
+        ensure_columns(conn, "analyses", ANALYSIS_EXTRA_COLUMNS)
         conn.commit()
+
+
+def ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
 
 
 def save_analysis(db_path: Path, record: dict[str, Any]) -> int:
@@ -56,6 +77,9 @@ def save_analysis(db_path: Path, record: dict[str, Any]) -> int:
         "upload_path",
         "report_xlsx_path",
         "report_md_path",
+        "related_cases_json",
+        "base_prompt_hash",
+        "base_prompt_path",
         "result_json",
         "pdf_summary_json",
     ]
@@ -85,7 +109,8 @@ def list_analyses(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
             """
             SELECT id, created_at, user_name, customer, document, project, revision,
                    provider, model, status, overall_risk, findings_count,
-                   max_severity, pdf_name, report_xlsx_path, report_md_path
+                   max_severity, pdf_name, report_xlsx_path, report_md_path,
+                   base_prompt_hash, related_cases_json
             FROM analyses
             ORDER BY id DESC
             LIMIT ?
@@ -93,4 +118,3 @@ def list_analyses(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
-

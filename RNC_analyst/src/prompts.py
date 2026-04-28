@@ -59,7 +59,13 @@ Checklist prioritario:
 """.strip()
 
 
-def build_review_prompt(project_info: dict[str, str], text_brief: str) -> str:
+def build_review_prompt(
+    project_info: dict[str, str],
+    text_brief: str,
+    *,
+    base_instructions: str = "",
+    similar_cases_context: str = "",
+) -> str:
     info = "\n".join(f"{key}: {value or 'nao informado'}" for key, value in project_info.items())
     return f"""
 Revise o projeto eletrico abaixo como assistente preventivo de RNC.
@@ -67,7 +73,13 @@ Revise o projeto eletrico abaixo como assistente preventivo de RNC.
 Dados informados pelo usuario:
 {info}
 
+Instrucoes basicas do projeto:
+{base_instructions or 'Nenhuma instrucao adicional configurada.'}
+
 {CHECKLIST}
+
+Base historica de RNC:
+{similar_cases_context or 'Nenhum caso historico semelhante foi anexado ao prompt.'}
 
 Instrucoes:
 - Foque em riscos que podem gerar retrabalho, duvida na montagem ou parada de producao.
@@ -75,8 +87,9 @@ Instrucoes:
 - Nao invente componente, cota ou divergencia que nao apareca no material.
 - Separe achado tecnico de sugestao generica.
 - Use severidade alta apenas para risco claro de parada, montagem errada ou documentacao critica ausente.
+- Quando um risco for semelhante a uma RNC historica, cite o ID do caso historico na evidencia ou recomendacao.
+- Use a base historica como alerta de padroes recorrentes, nao como prova isolada.
 
 Material extraido do PDF:
 {text_brief}
 """.strip()
-
