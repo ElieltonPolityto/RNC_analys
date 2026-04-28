@@ -1,0 +1,20 @@
+# Python/runtime
+__pycache__/
+*.pyc
+.venv/
+venv/
+RNC_analyst/.packages/
+*.log
+
+# Local secrets
+.env
+RNC_analyst/.env
+
+# Local operational data
+RNC_analyst/data/
+RNC_analyst/uploads/
+RNC_analyst/reports/
+
+# Confidential project documents
+*.pdf
+*.PDF
