@@ -1,0 +1,6 @@
+Descreva aqui, em linguagem direta, o que aconteceu nesse caso.
+
+Exemplo:
+- O projeto foi enviado para producao com etiqueta divergente do layout da porta.
+- A montagem parou porque a equipe nao conseguiu confirmar qual compressor estava associado a cada botao.
+- A verificacao preventiva deve comparar layout da porta, lista de etiquetas e tags dos comandos.
