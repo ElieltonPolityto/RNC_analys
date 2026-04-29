@@ -37,7 +37,7 @@ knowledge_base/
 
 Use uma subpasta por caso. O ID deve ser estavel (`ID01`, `ID02`, `ID03`) porque ele sera citado nos relatorios preventivos.
 
-Depois de copiar sua base real para essa pasta, abra a aba `Base RNC` e clique em `Indexar base`. O sistema extrai texto dos arquivos suportados, grava um indice local no SQLite e usa os casos mais parecidos durante novas analises.
+Depois de copiar sua base real para essa pasta, abra ou recarregue o RNC Analyst. O sistema indexa automaticamente a pasta `knowledge_base`, extrai texto dos arquivos suportados, grava um indice local no SQLite e usa os casos mais parecidos durante novas analises.
 
 Arquivos reais dentro de `knowledge_base/` nao entram no Git. Apenas o README e o template `ID_TEMPLATE` sao versionados.
 

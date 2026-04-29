@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from src.analysis import analyze_project
 from src.case_base import (
     ensure_case_base,
+    fingerprint_case_base,
     index_all_cases,
     init_case_tables,
     list_case_dirs,
@@ -59,10 +60,12 @@ def main() -> None:
     load_dotenv(BASE_DIR / ".env")
     init_db(DB_PATH)
     init_case_tables(DB_PATH)
+    autoindex_result = autoindex_case_base()
 
     st.set_page_config(page_title="RNC Analyst", layout="wide")
     st.title("RNC Analyst")
     st.caption("Revisao preventiva de projetos eletricos antes do envio para producao.")
+    render_autoindex_status(autoindex_result)
 
     provider, model, api_key, case_limit = render_sidebar()
     tab_new, tab_case_base, tab_prompt, tab_history, tab_settings = st.tabs(
@@ -79,6 +82,34 @@ def main() -> None:
         render_history()
     with tab_settings:
         render_settings()
+
+
+def autoindex_case_base() -> dict[str, Any]:
+    knowledge_base = CASE_BASE_PATHS["knowledge_base"]
+    signature = fingerprint_case_base(knowledge_base)
+    last_signature = st.session_state.get("case_base_signature")
+    if last_signature == signature:
+        return {
+            "ran": False,
+            "reason": "sem_alteracao",
+            "signature": signature,
+            "result": st.session_state.get("case_base_last_index_result"),
+        }
+
+    result = index_all_cases(DB_PATH, knowledge_base)
+    st.session_state["case_base_signature"] = signature
+    st.session_state["case_base_last_index_result"] = result
+    return {"ran": True, "reason": "base_alterada", "signature": signature, "result": result}
+
+
+def render_autoindex_status(autoindex_result: dict[str, Any]) -> None:
+    result = autoindex_result.get("result") or {}
+    if autoindex_result.get("ran"):
+        st.caption(
+            "Base RNC indexada automaticamente: "
+            f"{result.get('ok', 0)} ok, {result.get('warning', 0)} alerta, "
+            f"{result.get('error', 0)} erro, {result.get('pruned', 0)} removido."
+        )
 
 
 def render_sidebar() -> tuple[str, str, str, int]:
@@ -314,10 +345,13 @@ def render_case_base() -> None:
     col3.metric("Base local", knowledge_base.name)
 
     st.code(str(knowledge_base))
+    st.info("A base e indexada automaticamente quando o app abre ou quando a pasta knowledge_base muda.")
 
-    if st.button("Indexar base", type="primary", use_container_width=True):
+    if st.button("Reindexar base agora", type="primary", use_container_width=True):
         with st.spinner("Indexando casos historicos..."):
             result = index_all_cases(DB_PATH, knowledge_base)
+            st.session_state["case_base_signature"] = fingerprint_case_base(knowledge_base)
+            st.session_state["case_base_last_index_result"] = result
         st.success(
             f"Indexacao concluida: {result['ok']} ok, {result['warning']} alerta, {result['error']} erro."
         )

@@ -175,6 +175,14 @@ def index_all_cases(db_path: Path, knowledge_base: Path) -> dict[str, Any]:
     }
 
 
+def fingerprint_case_base(knowledge_base: Path) -> str:
+    hasher = hashlib.sha256()
+    for case_dir in list_case_dirs(knowledge_base):
+        hasher.update(case_dir.name.encode("utf-8"))
+        hasher.update(fingerprint_case(case_dir).encode("ascii"))
+    return hasher.hexdigest()
+
+
 def index_case(db_path: Path, case_dir: Path) -> dict[str, Any]:
     case_id = case_dir.name
     metadata = load_case_metadata(case_dir)
