@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from io import BytesIO
 from typing import Any
 
 from .utils import normalize_provider_payload, parse_json_payload
@@ -18,9 +17,10 @@ def analyze_pdf(
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
-    pdf_file = BytesIO(pdf_bytes)
-    pdf_file.name = file_name
-    uploaded = client.files.create(file=pdf_file, purpose="vision")
+    uploaded = client.files.create(
+        file=(file_name, pdf_bytes, "application/pdf"),
+        purpose="user_data",
+    )
 
     response = client.responses.create(
         model=model,
