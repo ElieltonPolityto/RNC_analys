@@ -54,6 +54,12 @@ Cada analise grava o hash do prompt utilizado, permitindo rastrear quais instruc
 
 Se nenhuma chave estiver configurada, o app gera uma pre-analise local baseada no texto extraido e nas paginas criticas.
 
+O modelo padrao da OpenAI e `gpt-5.5`. No `.env`, use o ID exatamente assim:
+
+```text
+OPENAI_MODEL=gpt-5.5
+```
+
 ## Estrutura
 
 ```text

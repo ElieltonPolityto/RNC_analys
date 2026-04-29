@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,7 @@ DB_PATH = RUNTIME_DIRS["data"] / "rnc_analyst.db"
 
 DEFAULT_MODELS = {
     "Modelo local": "local",
-    "OpenAI": "gpt-5.4-mini",
+    "OpenAI": "gpt-5.5",
 }
 
 
@@ -88,7 +89,7 @@ def render_sidebar() -> tuple[str, str, str, int]:
         help="A chave da OpenAI fica somente no arquivo .env.",
     )
 
-    default_model = os.getenv(MODEL_ENV.get(provider, ""), DEFAULT_MODELS[provider])
+    default_model = normalize_model_id(os.getenv(MODEL_ENV.get(provider, ""), DEFAULT_MODELS[provider]))
     model = default_model
 
     api_key = ""
@@ -108,6 +109,12 @@ def render_sidebar() -> tuple[str, str, str, int]:
     st.sidebar.divider()
     st.sidebar.caption("Chaves de API ficam apenas no .env. PDFs, relatorios e base local nao vao ao Git.")
     return provider, model, api_key, case_limit
+
+
+def normalize_model_id(value: str) -> str:
+    model = (value or "").strip()
+    model = re.sub(r"[\s_]+", "-", model)
+    return model or DEFAULT_MODELS["OpenAI"]
 
 
 def render_new_analysis(provider: str, model: str, api_key: str, case_limit: int) -> None:
