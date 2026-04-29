@@ -47,11 +47,10 @@ O arquivo `prompts/instrucoes_base.txt` contem as instrucoes operacionais fixas 
 
 Cada analise grava o hash do prompt utilizado, permitindo rastrear quais instrucoes estavam vigentes quando o relatorio foi gerado.
 
-## Provedores
+## Modos De Analise
 
-- OpenAI: caminho principal para PDF e visao.
-- Anthropic: alternativa forte para analise documental.
-- Groq: modo experimental/economico usando texto extraido no MVP.
+- OpenAI: usa a chave `OPENAI_API_KEY` configurada no arquivo `.env`.
+- Modelo local: executa a pre-analise local sem chamar API externa.
 
 Se nenhuma chave estiver configurada, o app gera uma pre-analise local baseada no texto extraido e nas paginas criticas.
 

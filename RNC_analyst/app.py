@@ -34,24 +34,18 @@ DB_PATH = RUNTIME_DIRS["data"] / "rnc_analyst.db"
 
 
 DEFAULT_MODELS = {
-    "Pre-analise local": "local",
+    "Modelo local": "local",
     "OpenAI": "gpt-5.4-mini",
-    "Anthropic": "claude-sonnet-4-20250514",
-    "Groq": "meta-llama/llama-4-scout-17b-16e-instruct",
 }
 
 
 API_ENV = {
     "OpenAI": "OPENAI_API_KEY",
-    "Anthropic": "ANTHROPIC_API_KEY",
-    "Groq": "GROQ_API_KEY",
 }
 
 
 MODEL_ENV = {
     "OpenAI": "OPENAI_MODEL",
-    "Anthropic": "ANTHROPIC_MODEL",
-    "Groq": "GROQ_MODEL",
 }
 
 
@@ -90,25 +84,18 @@ def render_sidebar() -> tuple[str, str, str, int]:
     st.sidebar.header("Analise")
     provider = st.sidebar.selectbox(
         "Provedor",
-        ["Pre-analise local", "OpenAI", "Anthropic", "Groq"],
-        help="Sem chave de API, o app executa apenas a pre-analise local.",
+        ["OpenAI", "Modelo local"],
+        help="A chave da OpenAI fica somente no arquivo .env.",
     )
 
     default_model = os.getenv(MODEL_ENV.get(provider, ""), DEFAULT_MODELS[provider])
-    model = st.sidebar.text_input("Modelo", value=default_model)
+    model = default_model
 
     api_key = ""
-    if provider != "Pre-analise local":
-        env_name = API_ENV[provider]
-        env_value = os.getenv(env_name, "")
-        typed_key = st.sidebar.text_input(
-            f"Chave {provider}",
-            type="password",
-            placeholder=f"Opcional se {env_name} estiver no .env",
-        )
-        api_key = typed_key or env_value
+    if provider == "OpenAI":
+        api_key = os.getenv(API_ENV[provider], "")
         if not api_key:
-            st.sidebar.warning("Chave nao configurada. A analise sera local.")
+            st.sidebar.warning("OPENAI_API_KEY nao configurada no .env. A analise sera local.")
 
     st.sidebar.divider()
     case_limit = st.sidebar.slider(
@@ -119,7 +106,7 @@ def render_sidebar() -> tuple[str, str, str, int]:
         help="Quantidade maxima de casos similares anexados ao prompt.",
     )
     st.sidebar.divider()
-    st.sidebar.caption("PDFs, uploads, relatorios, banco local e .env nao sao enviados ao Git.")
+    st.sidebar.caption("Chaves de API ficam apenas no .env. PDFs, relatorios e base local nao vao ao Git.")
     return provider, model, api_key, case_limit
 
 
@@ -371,11 +358,6 @@ def render_settings() -> None:
     st.subheader("Chaves de API")
     st.write("Crie um arquivo .env ao lado do app.py usando .env.example como base.")
     st.write("As chaves nunca sao gravadas no banco nem exportadas para relatorios.")
-    st.subheader("Modo Groq")
-    st.write(
-        "Neste MVP, Groq usa o texto extraido do PDF. A analise visual por paginas convertidas "
-        "em imagem entra na proxima etapa."
-    )
 
 
 def build_record(

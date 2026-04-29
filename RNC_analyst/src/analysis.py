@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from .ai_providers import anthropic_provider, groq_provider, openai_provider
+from .ai_providers import openai_provider
 from .case_base import build_cases_prompt_context
 from .pdf_tools import build_text_brief
 from .prompts import build_review_prompt
@@ -35,15 +35,18 @@ def analyze_project(
     )
     local_findings = build_local_findings(pdf_summary, project_info, similar_cases)
 
-    if provider == "Pre-analise local" or not api_key:
+    if provider in {"Modelo local", "Pre-analise local"} or not api_key:
+        provider_error = ""
+        if provider == "OpenAI" and not api_key:
+            provider_error = "OPENAI_API_KEY nao configurada no .env."
         return build_result(
             provider=provider,
             model=model,
             status="pre_analise_local",
-            summary="Pre-analise local gerada. Configure uma chave de API para revisao com IA generativa.",
+            summary="Pre-analise local gerada.",
             overall_risk=estimate_overall_risk(local_findings),
             findings=local_findings,
-            provider_error="" if provider == "Pre-analise local" else "Chave de API nao informada.",
+            provider_error=provider_error,
             related_cases=similar_cases,
         )
 
@@ -54,20 +57,6 @@ def analyze_project(
                 model=model,
                 pdf_bytes=pdf_bytes,
                 file_name=file_name,
-                prompt=prompt,
-            )
-        elif provider == "Anthropic":
-            payload = anthropic_provider.analyze_pdf(
-                api_key=api_key,
-                model=model,
-                pdf_bytes=pdf_bytes,
-                file_name=file_name,
-                prompt=prompt,
-            )
-        elif provider == "Groq":
-            payload = groq_provider.analyze_text(
-                api_key=api_key,
-                model=model,
                 prompt=prompt,
             )
         else:
