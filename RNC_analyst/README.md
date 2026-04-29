@@ -60,6 +60,14 @@ O modelo padrao da OpenAI e `gpt-5.5`. No `.env`, use o ID exatamente assim:
 OPENAI_MODEL=gpt-5.5
 ```
 
+## Relatorios
+
+Cada analise gera tres saidas locais em `reports/`:
+
+- PDF: relatorio direto para circular, anexar e arquivar.
+- Excel: dados estruturados para filtros e indicadores.
+- Markdown: versao tecnica em texto para auditoria e ajustes.
+
 ## Estrutura
 
 ```text

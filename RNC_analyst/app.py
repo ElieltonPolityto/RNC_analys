@@ -267,8 +267,16 @@ def render_result(result: dict[str, Any], report_paths: dict[str, Path]) -> None
         st.subheader("Apontamentos")
         st.dataframe(findings, use_container_width=True, hide_index=True)
 
-    col_a, col_b = st.columns(2)
+    col_a, col_b, col_c = st.columns(3)
     with col_a:
+        st.download_button(
+            "Baixar PDF",
+            data=report_paths["pdf"].read_bytes(),
+            file_name=report_paths["pdf"].name,
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    with col_b:
         st.download_button(
             "Baixar Excel",
             data=report_paths["xlsx"].read_bytes(),
@@ -276,7 +284,7 @@ def render_result(result: dict[str, Any], report_paths: dict[str, Path]) -> None
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
-    with col_b:
+    with col_c:
         st.download_button(
             "Baixar Markdown",
             data=report_paths["md"].read_text(encoding="utf-8"),
@@ -395,6 +403,7 @@ def build_record(
         "upload_path": str(upload_path),
         "report_xlsx_path": str(report_paths["xlsx"]),
         "report_md_path": str(report_paths["md"]),
+        "report_pdf_path": str(report_paths["pdf"]),
         "related_cases_json": json.dumps(related_cases, ensure_ascii=False),
         "base_prompt_hash": prompt_hash(base_prompt),
         "base_prompt_path": str(CASE_BASE_PATHS["instructions"]),

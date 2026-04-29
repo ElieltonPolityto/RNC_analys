@@ -5,3 +5,4 @@ xlrd>=2.0
 pypdf>=4.2
 python-dotenv>=1.0
 openai>=1.50
+reportlab>=4.2

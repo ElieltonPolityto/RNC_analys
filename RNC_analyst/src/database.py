@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS analyses (
     upload_path TEXT,
     report_xlsx_path TEXT,
     report_md_path TEXT,
+    report_pdf_path TEXT,
     related_cases_json TEXT,
     base_prompt_hash TEXT,
     base_prompt_path TEXT,
@@ -38,6 +39,7 @@ ANALYSIS_EXTRA_COLUMNS = {
     "related_cases_json": "TEXT",
     "base_prompt_hash": "TEXT",
     "base_prompt_path": "TEXT",
+    "report_pdf_path": "TEXT",
 }
 
 
@@ -77,6 +79,7 @@ def save_analysis(db_path: Path, record: dict[str, Any]) -> int:
         "upload_path",
         "report_xlsx_path",
         "report_md_path",
+        "report_pdf_path",
         "related_cases_json",
         "base_prompt_hash",
         "base_prompt_path",
@@ -110,7 +113,7 @@ def list_analyses(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
             SELECT id, created_at, user_name, customer, document, project, revision,
                    provider, model, status, overall_risk, findings_count,
                    max_severity, pdf_name, report_xlsx_path, report_md_path,
-                   base_prompt_hash, related_cases_json
+                   report_pdf_path, base_prompt_hash, related_cases_json
             FROM analyses
             ORDER BY id DESC
             LIMIT ?
