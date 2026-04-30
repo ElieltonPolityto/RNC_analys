@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 
 from .pdf_tools import build_text_brief, normalize_text, parse_pdf_bytes
+from .vector_store import query_vector_cases, sync_vector_index
 
 
 CASE_TABLE_SCHEMA = """
@@ -157,13 +158,16 @@ def list_case_dirs(knowledge_base: Path) -> list[Path]:
     )
 
 
-def index_all_cases(db_path: Path, knowledge_base: Path) -> dict[str, Any]:
+def index_all_cases(db_path: Path, knowledge_base: Path, vector_dir: Path | None = None) -> dict[str, Any]:
     init_case_tables(db_path)
     results = []
     case_dirs = list_case_dirs(knowledge_base)
     for case_dir in case_dirs:
         results.append(index_case(db_path, case_dir))
     pruned = prune_missing_cases(db_path, [path.name for path in case_dirs])
+    vector_index = None
+    if vector_dir is not None:
+        vector_index = sync_vector_index(vector_dir, load_vector_records(db_path))
     return {
         "indexed_at": datetime.now().isoformat(timespec="seconds"),
         "total": len(results),
@@ -171,6 +175,7 @@ def index_all_cases(db_path: Path, knowledge_base: Path) -> dict[str, Any]:
         "warning": sum(1 for item in results if item.get("status") == "warning"),
         "error": sum(1 for item in results if item.get("status") == "error"),
         "pruned": pruned,
+        "vector_index": vector_index,
         "results": results,
     }
 
@@ -456,70 +461,129 @@ def list_indexed_cases(db_path: Path) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def search_similar_cases(
-    db_path: Path,
-    *,
-    pdf_summary: dict[str, Any],
-    project_info: dict[str, str],
-    limit: int = 5,
-) -> list[dict[str, Any]]:
+def load_vector_records(db_path: Path) -> list[dict[str, Any]]:
     if not db_path.exists():
         return []
     init_case_tables(db_path)
-    query_text = "\n".join(
-        [
-            json.dumps(project_info, ensure_ascii=False),
-            json.dumps(pdf_summary.get("inferred", {}), ensure_ascii=False),
-            build_text_brief(pdf_summary, max_chars=50000),
-        ]
-    )
-    query_counter = Counter(tokenize(query_text))
-    if not query_counter:
-        return []
-
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
             SELECT case_id, status, title, customer, document, project, revision,
                    rnc_type, severity, root_cause, corrective_action,
-                   preventive_action, summary_text, search_text, keywords_json
+                   preventive_action, summary_text, search_text, keywords_json,
+                   file_fingerprint
             FROM rnc_cases
             WHERE status IN ('ok', 'warning')
             """
         ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def search_similar_cases(
+    db_path: Path,
+    *,
+    pdf_summary: dict[str, Any],
+    project_info: dict[str, str],
+    limit: int = 5,
+    vector_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    init_case_tables(db_path)
+    query_text = build_case_query_text(pdf_summary, project_info)
+    query_counter = Counter(tokenize(query_text))
+    if not query_counter:
+        return []
+
+    rows = load_vector_records(db_path)
+    row_by_id = {row["case_id"]: row for row in rows}
 
     matches = []
-    for row in rows:
-        candidate = dict(row)
-        candidate_counter = Counter(tokenize(candidate.get("search_text") or ""))
-        lexical_score = cosine_similarity(query_counter, candidate_counter)
-        metadata_score = metadata_similarity(project_info, pdf_summary.get("inferred", {}), candidate)
-        score = min(1.0, lexical_score * 0.78 + metadata_score * 0.22)
-        if score <= 0:
+    seen: set[str] = set()
+    if vector_dir is not None and limit > 0:
+        vector_result = query_vector_cases(vector_dir, query_text, max(limit * 3, 10))
+        for vector_match in vector_result.get("matches", []):
+            candidate = row_by_id.get(vector_match.get("case_id", ""))
+            if not candidate:
+                continue
+            match = build_ranked_match(
+                candidate,
+                query_counter,
+                project_info,
+                pdf_summary,
+                vector_score=float(vector_match.get("vector_score") or 0),
+                vector_distance=vector_match.get("vector_distance"),
+            )
+            if match["score"] <= 0:
+                continue
+            matches.append(match)
+            seen.add(candidate["case_id"])
+
+    for candidate in rows:
+        if len(matches) >= max(limit * 2, limit) and vector_dir is not None:
+            break
+        if candidate["case_id"] in seen:
             continue
-        keywords = json.loads(candidate.get("keywords_json") or "[]")
-        matches.append(
-            {
-                "case_id": candidate["case_id"],
-                "score": round(score, 4),
-                "similarity": similarity_label(score),
-                "title": candidate.get("title") or candidate["case_id"],
-                "customer": candidate.get("customer", ""),
-                "document": candidate.get("document", ""),
-                "project": candidate.get("project", ""),
-                "revision": candidate.get("revision", ""),
-                "rnc_type": candidate.get("rnc_type", ""),
-                "severity": candidate.get("severity", ""),
-                "root_cause": candidate.get("root_cause", ""),
-                "corrective_action": candidate.get("corrective_action", ""),
-                "preventive_action": candidate.get("preventive_action", ""),
-                "keywords": keywords[:15],
-                "summary_text": (candidate.get("summary_text") or "")[:7000],
-            }
-        )
+        match = build_ranked_match(candidate, query_counter, project_info, pdf_summary)
+        if match["score"] <= 0:
+            continue
+        matches.append(match)
 
     return sorted(matches, key=lambda item: item["score"], reverse=True)[:limit]
+
+
+def build_case_query_text(pdf_summary: dict[str, Any], project_info: dict[str, str]) -> str:
+    return "\n".join(
+        [
+            json.dumps(project_info, ensure_ascii=False),
+            json.dumps(pdf_summary.get("inferred", {}), ensure_ascii=False),
+            build_text_brief(pdf_summary, max_chars=50000),
+        ]
+    )
+
+
+def build_ranked_match(
+    candidate: dict[str, Any],
+    query_counter: Counter[str],
+    project_info: dict[str, str],
+    pdf_summary: dict[str, Any],
+    *,
+    vector_score: float | None = None,
+    vector_distance: float | None = None,
+) -> dict[str, Any]:
+    candidate_counter = Counter(tokenize(candidate.get("search_text") or ""))
+    lexical_score = cosine_similarity(query_counter, candidate_counter)
+    metadata_score = metadata_similarity(project_info, pdf_summary.get("inferred", {}), candidate)
+    if vector_score is None:
+        score = min(1.0, lexical_score * 0.78 + metadata_score * 0.22)
+        retrieval_method = "lexical"
+    else:
+        score = min(1.0, vector_score * 0.68 + lexical_score * 0.20 + metadata_score * 0.12)
+        retrieval_method = "vetorial"
+    keywords = json.loads(candidate.get("keywords_json") or "[]")
+    match = {
+        "case_id": candidate["case_id"],
+        "score": round(score, 4),
+        "similarity": similarity_label(score),
+        "retrieval_method": retrieval_method,
+        "title": candidate.get("title") or candidate["case_id"],
+        "customer": candidate.get("customer", ""),
+        "document": candidate.get("document", ""),
+        "project": candidate.get("project", ""),
+        "revision": candidate.get("revision", ""),
+        "rnc_type": candidate.get("rnc_type", ""),
+        "severity": candidate.get("severity", ""),
+        "root_cause": candidate.get("root_cause", ""),
+        "corrective_action": candidate.get("corrective_action", ""),
+        "preventive_action": candidate.get("preventive_action", ""),
+        "keywords": keywords[:15],
+        "summary_text": (candidate.get("summary_text") or "")[:7000],
+    }
+    if vector_score is not None:
+        match["vector_score"] = round(vector_score, 4)
+        match["vector_distance"] = vector_distance
+    return match
 
 
 def cosine_similarity(left: Counter[str], right: Counter[str]) -> float:
@@ -572,6 +636,7 @@ def build_cases_prompt_context(cases: list[dict[str, Any]]) -> str:
             "\n".join(
                 [
                     f"Caso historico {case['case_id']} ({case['similarity']} similaridade, score {case['score']}):",
+                    f"Metodo de busca: {case.get('retrieval_method') or 'lexical'}",
                     f"Cliente: {case.get('customer') or 'nao informado'}",
                     f"Documento/projeto: {case.get('document') or '-'} / {case.get('project') or '-'}",
                     f"Tipo de RNC: {case.get('rnc_type') or 'nao informado'}",

@@ -92,11 +92,12 @@ def write_pdf(
     related_cases = result.get("related_cases", [])
     if related_cases:
         story.append(Paragraph("Casos Historicos Relacionados", styles["Heading"]))
-        case_rows = [["ID", "Similaridade", "Tipo RNC", "Causa raiz"]]
+        case_rows = [["ID", "Busca", "Similaridade", "Tipo RNC", "Causa raiz"]]
         for case in related_cases[:8]:
             case_rows.append(
                 [
                     case.get("case_id", ""),
+                    case.get("retrieval_method", ""),
                     f"{case.get('similarity', '')} ({case.get('score', '')})",
                     limit_text(case.get("rnc_type", ""), 90),
                     limit_text(case.get("root_cause", ""), 140),
@@ -106,7 +107,7 @@ def write_pdf(
             make_pdf_table(
                 case_rows,
                 styles,
-                column_widths=[2.2 * cm, 3.0 * cm, 5.0 * cm, 6.0 * cm],
+                column_widths=[1.8 * cm, 2.0 * cm, 2.6 * cm, 4.6 * cm, 5.2 * cm],
                 has_header=True,
             )
         )
@@ -237,8 +238,10 @@ def write_markdown(
                 [
                     f"### {case.get('case_id', '')}",
                     "",
+                    f"- Busca: {case.get('retrieval_method', '')}",
                     f"- Similaridade: {case.get('similarity', '')}",
                     f"- Score: {case.get('score', '')}",
+                    f"- Score vetorial: {case.get('vector_score', '')}",
                     f"- Tipo de RNC: {case.get('rnc_type', '')}",
                     f"- Severidade historica: {case.get('severity', '')}",
                     f"- Causa raiz: {case.get('root_cause', '')}",
@@ -293,8 +296,10 @@ def flatten_related_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
                 "case_id": "",
+                "retrieval_method": "",
                 "similarity": "",
                 "score": "",
+                "vector_score": "",
                 "rnc_type": "",
                 "severity": "",
                 "root_cause": "",
@@ -304,8 +309,10 @@ def flatten_related_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "case_id": case.get("case_id", ""),
+            "retrieval_method": case.get("retrieval_method", ""),
             "similarity": case.get("similarity", ""),
             "score": case.get("score", ""),
+            "vector_score": case.get("vector_score", ""),
             "title": case.get("title", ""),
             "customer": case.get("customer", ""),
             "document": case.get("document", ""),

@@ -7,7 +7,7 @@ O objetivo do sistema e apontar riscos que podem gerar RNC, como cotas ausentes,
 ## Como Rodar
 
 1. Crie uma copia de `.env.example` chamada `.env`.
-2. Preencha pelo menos uma chave de API, quando quiser usar IA externa.
+2. Preencha `OPENAI_API_KEY`, quando quiser usar IA externa.
 3. Execute `iniciar_RNC_analyst.bat`.
 4. Abra a interface no navegador, se ela nao abrir automaticamente.
 
@@ -40,6 +40,39 @@ Use uma subpasta por caso. O ID deve ser estavel (`ID01`, `ID02`, `ID03`) porque
 Depois de copiar sua base real para essa pasta, abra ou recarregue o RNC Analyst. O sistema indexa automaticamente a pasta `knowledge_base`, extrai texto dos arquivos suportados, grava um indice local no SQLite e usa os casos mais parecidos durante novas analises.
 
 Arquivos reais dentro de `knowledge_base/` nao entram no Git. Apenas o README e o template `ID_TEMPLATE` sao versionados.
+
+## Como A Consulta Historica Funciona
+
+Ao abrir o app, a base `knowledge_base/` e varrida automaticamente. Para cada pasta `IDxx`, o sistema:
+
+1. Le `metadata.json`, `observacoes.txt`, PDFs, planilhas e textos suportados.
+2. Grava o resumo tecnico no SQLite local em `data/rnc_analyst.db`.
+3. Atualiza um indice vetorial ChromaDB em `data/chroma/`.
+4. Na analise de um projeto novo, busca os casos historicos mais parecidos e anexa os resumos ao prompt enviado para a IA.
+
+Se a busca vetorial nao estiver disponivel, o app continua funcionando com busca lexical no SQLite. Isso evita parar a operacao por falha de dependencia, token ou internet.
+
+## Embeddings E Custo
+
+Por padrao, o `.env.example` usa:
+
+```text
+EMBEDDING_PROVIDER=local_hash
+```
+
+Esse modo e gratuito, local e nao envia sua base historica para terceiros. Ele cria vetores por hashing de termos tecnicos, o que e suficiente como fallback robusto, mas menos semantico que um modelo dedicado.
+
+Para usar Hugging Face Inference API, altere o `.env`:
+
+```text
+EMBEDDING_PROVIDER=huggingface
+HUGGINGFACE_API_TOKEN=hf_seu_token
+HUGGINGFACE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+```
+
+Nesse modo, os textos usados para indexacao e consulta sao enviados ao Hugging Face para gerar embeddings. Consulte limites e politica de custo da sua conta antes de usar com documentos de cliente.
+
+Tokens da OpenAI sao consumidos somente quando voce escolhe `OpenAI` para gerar a analise final. A leitura da base local, o SQLite e o ChromaDB local nao consomem tokens da OpenAI. Se `EMBEDDING_PROVIDER=huggingface`, a etapa de embeddings consome a cota do Hugging Face, nao da OpenAI.
 
 ## Prompt Base
 
@@ -82,8 +115,8 @@ src/
   pdf_tools.py
   prompts.py
   report_writer.py
+  vector_store.py
   ai_providers/
-    anthropic_provider.py
-    groq_provider.py
     openai_provider.py
+    utils.py
 ```

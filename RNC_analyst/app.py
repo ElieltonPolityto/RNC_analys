@@ -27,6 +27,7 @@ from src.case_base import (
 from src.database import init_db, list_analyses, save_analysis
 from src.pdf_tools import ensure_runtime_dirs, parse_pdf_bytes, save_uploaded_pdf
 from src.report_writer import write_reports
+from src.vector_store import load_vector_config
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -86,7 +87,7 @@ def main() -> None:
 
 def autoindex_case_base() -> dict[str, Any]:
     knowledge_base = CASE_BASE_PATHS["knowledge_base"]
-    signature = fingerprint_case_base(knowledge_base)
+    signature = case_base_runtime_signature(knowledge_base)
     last_signature = st.session_state.get("case_base_signature")
     if last_signature == signature:
         return {
@@ -96,19 +97,35 @@ def autoindex_case_base() -> dict[str, Any]:
             "result": st.session_state.get("case_base_last_index_result"),
         }
 
-    result = index_all_cases(DB_PATH, knowledge_base)
+    result = index_all_cases(DB_PATH, knowledge_base, RUNTIME_DIRS["vectors"])
     st.session_state["case_base_signature"] = signature
     st.session_state["case_base_last_index_result"] = result
     return {"ran": True, "reason": "base_alterada", "signature": signature, "result": result}
 
 
+def case_base_runtime_signature(knowledge_base: Path) -> str:
+    vector_config = load_vector_config()
+    payload = {
+        "case_base": fingerprint_case_base(knowledge_base),
+        "embedding_provider": vector_config.provider,
+        "collection": vector_config.collection,
+        "local_dimensions": vector_config.local_dimensions,
+        "huggingface_model": vector_config.huggingface_model,
+        "huggingface_url": vector_config.huggingface_url,
+    }
+    return json.dumps(payload, sort_keys=True)
+
+
 def render_autoindex_status(autoindex_result: dict[str, Any]) -> None:
     result = autoindex_result.get("result") or {}
     if autoindex_result.get("ran"):
+        vector_index = result.get("vector_index") or {}
+        vector_message = vector_index.get("message") or "Busca vetorial nao executada."
         st.caption(
             "Base RNC indexada automaticamente: "
             f"{result.get('ok', 0)} ok, {result.get('warning', 0)} alerta, "
-            f"{result.get('error', 0)} erro, {result.get('pruned', 0)} removido."
+            f"{result.get('error', 0)} erro, {result.get('pruned', 0)} removido. "
+            f"{vector_message}"
         )
 
 
@@ -199,6 +216,7 @@ def render_new_analysis(provider: str, model: str, api_key: str, case_limit: int
             pdf_summary=pdf_summary,
             project_info=project_info,
             limit=case_limit,
+            vector_dir=RUNTIME_DIRS["vectors"],
         )
         result = analyze_project(
             provider=provider,
@@ -281,8 +299,10 @@ def render_result(result: dict[str, Any], report_paths: dict[str, Path]) -> None
         st.subheader("Casos historicos relacionados")
         visible_columns = [
             "case_id",
+            "retrieval_method",
             "similarity",
             "score",
+            "vector_score",
             "rnc_type",
             "severity",
             "root_cause",
@@ -338,19 +358,27 @@ def render_case_base() -> None:
     knowledge_base = CASE_BASE_PATHS["knowledge_base"]
     indexed_cases = list_indexed_cases(DB_PATH)
     case_dirs = list_case_dirs(knowledge_base)
+    vector_config = load_vector_config()
+    last_index = st.session_state.get("case_base_last_index_result") or {}
+    vector_index = last_index.get("vector_index") or {}
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Pastas ID", len(case_dirs))
     col2.metric("Casos indexados", len(indexed_cases))
     col3.metric("Base local", knowledge_base.name)
+    col4.metric("Busca vetorial", vector_index.get("state") or "pendente")
 
     st.code(str(knowledge_base))
     st.info("A base e indexada automaticamente quando o app abre ou quando a pasta knowledge_base muda.")
+    st.caption(
+        f"ChromaDB: {RUNTIME_DIRS['vectors']} | "
+        f"Provedor de embedding: {vector_config.provider} | Colecao: {vector_config.collection}"
+    )
 
     if st.button("Reindexar base agora", type="primary", use_container_width=True):
         with st.spinner("Indexando casos historicos..."):
-            result = index_all_cases(DB_PATH, knowledge_base)
-            st.session_state["case_base_signature"] = fingerprint_case_base(knowledge_base)
+            result = index_all_cases(DB_PATH, knowledge_base, RUNTIME_DIRS["vectors"])
+            st.session_state["case_base_signature"] = case_base_runtime_signature(knowledge_base)
             st.session_state["case_base_last_index_result"] = result
         st.success(
             f"Indexacao concluida: {result['ok']} ok, {result['warning']} alerta, {result['error']} erro."
@@ -398,6 +426,7 @@ def render_settings() -> None:
                 f"Banco SQLite: {DB_PATH}",
                 f"Uploads: {RUNTIME_DIRS['uploads']}",
                 f"Relatorios: {RUNTIME_DIRS['reports']}",
+                f"ChromaDB: {RUNTIME_DIRS['vectors']}",
                 f"Base RNC: {CASE_BASE_PATHS['knowledge_base']}",
                 f"Prompt base: {CASE_BASE_PATHS['instructions']}",
                 f"Exemplo de ambiente: {BASE_DIR / '.env.example'}",
