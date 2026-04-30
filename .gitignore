@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 RNC_analyst/.packages/
+RNC_analyst/.packages_runtime/
 *.log
 
 # Local secrets
