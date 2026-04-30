@@ -58,7 +58,7 @@ def cached_parse_pdf(file_bytes: bytes, file_name: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    load_dotenv(BASE_DIR / ".env")
+    load_dotenv(BASE_DIR / ".env", override=True)
     init_db(DB_PATH)
     init_case_tables(DB_PATH)
     autoindex_result = autoindex_case_base()
