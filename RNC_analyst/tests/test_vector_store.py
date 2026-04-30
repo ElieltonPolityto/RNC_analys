@@ -5,7 +5,9 @@ import unittest
 
 from src.vector_store import (
     coerce_huggingface_embeddings,
+    coerce_single_embedding,
     hashing_embedding,
+    normalize_huggingface_url,
     normalize_provider,
     sanitize_collection_name,
 )
@@ -43,6 +45,22 @@ class VectorStoreTests(unittest.TestCase):
         self.assertEqual(normalize_provider("off"), "disabled")
         self.assertEqual(normalize_provider("desconhecido"), "local_hash")
         self.assertEqual(sanitize_collection_name(" rnc casos cliente/linha "), "rnc_casos_cliente_linha")
+
+    def test_coerces_numpy_like_embeddings(self) -> None:
+        class NumpyLike:
+            def tolist(self) -> list[float]:
+                return [0.2, 0.3, 0.5]
+
+        self.assertEqual(coerce_single_embedding(NumpyLike()), [0.2, 0.3, 0.5])
+
+    def test_deprecated_huggingface_url_is_ignored(self) -> None:
+        self.assertEqual(
+            normalize_huggingface_url(
+                "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+            ),
+            "",
+        )
+        self.assertEqual(normalize_huggingface_url("https://example.com/embed"), "https://example.com/embed")
 
 
 if __name__ == "__main__":

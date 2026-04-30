@@ -83,7 +83,10 @@ Para usar Hugging Face Inference API, altere o `.env`:
 EMBEDDING_PROVIDER=huggingface
 HUGGINGFACE_API_TOKEN=hf_seu_token
 HUGGINGFACE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+HUGGINGFACE_EMBEDDING_URL=
 ```
+
+Deixe `HUGGINGFACE_EMBEDDING_URL` vazio. O app usa o SDK oficial da Hugging Face, que chama o roteador atual de Inference Providers. Preencha essa URL somente se voce quiser forcar um endpoint especifico.
 
 Nesse modo, os textos usados para indexacao e consulta sao enviados ao Hugging Face para gerar embeddings. Consulte limites e politica de custo da sua conta antes de usar com documentos de cliente.
 

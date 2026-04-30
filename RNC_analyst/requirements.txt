@@ -8,3 +8,4 @@ openai>=1.50
 reportlab>=4.2
 chromadb>=0.5
 requests>=2.32
+huggingface-hub>=1.0

@@ -28,7 +28,7 @@ def load_vector_config() -> VectorConfig:
     provider = normalize_provider(os.getenv("EMBEDDING_PROVIDER", "local_hash"))
     local_dimensions = parse_positive_int(os.getenv("LOCAL_EMBEDDING_DIMENSIONS"), DEFAULT_LOCAL_DIMENSIONS)
     hf_model = os.getenv("HUGGINGFACE_EMBEDDING_MODEL", DEFAULT_HF_MODEL).strip() or DEFAULT_HF_MODEL
-    hf_url = os.getenv("HUGGINGFACE_EMBEDDING_URL", "").strip()
+    hf_url = normalize_huggingface_url(os.getenv("HUGGINGFACE_EMBEDDING_URL", ""))
     hf_token = (
         os.getenv("HUGGINGFACE_API_TOKEN", "").strip()
         or os.getenv("HF_TOKEN", "").strip()
@@ -56,6 +56,15 @@ def normalize_provider(value: str) -> str:
     if provider not in {"local_hash", "huggingface", "disabled"}:
         return "local_hash"
     return provider
+
+
+def normalize_huggingface_url(value: str) -> str:
+    url = (value or "").strip()
+    if not url:
+        return ""
+    if "api-inference.huggingface.co/pipeline/feature-extraction" in url:
+        return ""
+    return url
 
 
 def default_collection_name(provider: str, hf_model: str, local_dimensions: int) -> str:
@@ -263,19 +272,56 @@ def embed_texts(texts: list[str], config: VectorConfig) -> list[list[float]]:
 def embed_with_huggingface(texts: list[str], config: VectorConfig) -> list[list[float]]:
     if not config.huggingface_token:
         raise RuntimeError("HUGGINGFACE_API_TOKEN nao configurado no .env")
+
+    if not texts:
+        return []
+
+    if not config.huggingface_url:
+        try:
+            return embed_with_huggingface_client(texts, config)
+        except Exception as exc:
+            raise RuntimeError(
+                "Falha no Hugging Face InferenceClient. "
+                "Confira token, permissoes de Inference Providers e modelo configurado. "
+                f"Detalhe: {exc}"
+            ) from exc
+
+    return embed_with_huggingface_url(texts, config)
+
+
+def embed_with_huggingface_client(texts: list[str], config: VectorConfig) -> list[list[float]]:
+    try:
+        from huggingface_hub import InferenceClient  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("instale a dependencia huggingface-hub ou execute o .bat novamente") from exc
+
+    client = InferenceClient(
+        model=config.huggingface_model,
+        provider="hf-inference",
+        token=config.huggingface_token,
+        timeout=90,
+    )
+    embeddings = [
+        client.feature_extraction(
+            text,
+            normalize=True,
+            truncate=True,
+        )
+        for text in texts
+    ]
+    return [coerce_single_embedding(embedding) for embedding in embeddings]
+
+
+def embed_with_huggingface_url(texts: list[str], config: VectorConfig) -> list[list[float]]:
     try:
         import requests  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError("instale a dependencia requests ou execute o .bat novamente") from exc
 
-    url = config.huggingface_url or (
-        "https://api-inference.huggingface.co/pipeline/feature-extraction/"
-        f"{config.huggingface_model}"
-    )
     response = requests.post(
-        url,
+        config.huggingface_url,
         headers={"Authorization": f"Bearer {config.huggingface_token}"},
-        json={"inputs": texts, "options": {"wait_for_model": True}},
+        json={"inputs": texts, "normalize": True, "truncate": True},
         timeout=90,
     )
     response.raise_for_status()
@@ -326,6 +372,8 @@ def coerce_huggingface_embeddings(payload: Any, expected_count: int) -> list[lis
 
 
 def coerce_single_embedding(value: Any) -> list[float]:
+    if hasattr(value, "tolist"):
+        return coerce_single_embedding(value.tolist())
     if is_number_list(value):
         return [float(item) for item in value]
     if isinstance(value, list) and value and all(is_number_list(item) for item in value):
