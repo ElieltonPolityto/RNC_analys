@@ -55,6 +55,23 @@ SUPPORTED_TABLE_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 SUPPORTED_EXTENSIONS = {".pdf", *SUPPORTED_TEXT_EXTENSIONS, *SUPPORTED_TABLE_EXTENSIONS}
 PROJECT_HINTS = ("projeto", "project", "desenho", "eletrico", "eltrico", "qpl", "painel")
 RNC_HINTS = ("rnc", "nao_conformidade", "nao-conformidade", "conformidade", "relatorio", "relatorio_rnc")
+METADATA_TEMPLATE = {
+    "case_id": "",
+    "cliente": "",
+    "documento": "",
+    "pedido": "",
+    "projeto": "",
+    "revisao": "",
+    "data_rnc": "",
+    "tipo_rnc": "",
+    "severidade": "",
+    "causa_raiz": "",
+    "acao_corretiva": "",
+    "acao_preventiva": "",
+    "paginas_relacionadas": [],
+    "tags_componentes": [],
+    "observacoes": "",
+}
 STOPWORDS = {
     "a",
     "as",
@@ -274,6 +291,300 @@ def load_case_metadata(case_dir: Path) -> dict[str, Any]:
         return {"case_id": case_dir.name, "metadata_error": str(exc)}
     payload.setdefault("case_id", case_dir.name)
     return payload
+
+
+def generate_metadata_files(knowledge_base: Path, *, fill_existing_empty: bool = True) -> dict[str, Any]:
+    results = [
+        generate_case_metadata_file(case_dir, fill_existing_empty=fill_existing_empty)
+        for case_dir in list_case_dirs(knowledge_base)
+    ]
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "total": len(results),
+        "created": sum(1 for item in results if item.get("status") == "created"),
+        "updated": sum(1 for item in results if item.get("status") == "updated"),
+        "skipped": sum(1 for item in results if item.get("status") == "skipped"),
+        "error": sum(1 for item in results if item.get("status") == "error"),
+        "results": results,
+    }
+
+
+def generate_case_metadata_file(case_dir: Path, *, fill_existing_empty: bool = True) -> dict[str, Any]:
+    metadata_path = case_dir / "metadata.json"
+    generated = infer_case_metadata(case_dir)
+    generated["case_id"] = case_dir.name
+
+    if metadata_path.exists():
+        try:
+            current = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            return {
+                "case_id": case_dir.name,
+                "status": "error",
+                "message": f"metadata.json invalido: {exc}",
+                "metadata_path": str(metadata_path),
+            }
+
+        if not fill_existing_empty:
+            return {
+                "case_id": case_dir.name,
+                "status": "skipped",
+                "message": "metadata.json ja existe.",
+                "metadata_path": str(metadata_path),
+            }
+
+        merged = merge_metadata_empty_fields(current, generated)
+        if merged == current:
+            return {
+                "case_id": case_dir.name,
+                "status": "skipped",
+                "message": "metadata.json ja estava completo ou sem novos dados inferidos.",
+                "metadata_path": str(metadata_path),
+            }
+        metadata_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {
+            "case_id": case_dir.name,
+            "status": "updated",
+            "message": "Campos vazios preenchidos.",
+            "metadata_path": str(metadata_path),
+        }
+
+    metadata_path.write_text(json.dumps(generated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "case_id": case_dir.name,
+        "status": "created",
+        "message": "metadata.json criado automaticamente.",
+        "metadata_path": str(metadata_path),
+    }
+
+
+def infer_case_metadata(case_dir: Path) -> dict[str, Any]:
+    files = discover_case_files(case_dir)
+    errors: list[str] = []
+    project_text = collect_files_text(files["project_files"], errors)
+    rnc_text = collect_files_text(files["rnc_files"], errors)
+    observation_text = read_observations(case_dir)
+    combined_text = "\n".join([project_text, rnc_text, observation_text])
+    project_inferred = infer_project_metadata_from_pdfs(files["project_files"], errors)
+    text_inferred = infer_project_metadata_from_text(combined_text)
+
+    metadata = build_empty_metadata(case_dir.name)
+    metadata.update(
+        {
+            "cliente": first_value(project_inferred.get("cliente"), text_inferred.get("cliente")),
+            "documento": first_value(project_inferred.get("documento"), text_inferred.get("documento")),
+            "pedido": first_value(project_inferred.get("pedido"), text_inferred.get("pedido")),
+            "projeto": first_value(project_inferred.get("projeto"), text_inferred.get("projeto")),
+            "revisao": first_value(project_inferred.get("revisao"), text_inferred.get("revisao")),
+            "data_rnc": infer_rnc_date(rnc_text or combined_text),
+            "tipo_rnc": infer_rnc_type(rnc_text or combined_text),
+            "severidade": infer_severity(rnc_text or combined_text),
+            "causa_raiz": extract_labeled_value(
+                rnc_text,
+                ["causa raiz", "causa", "motivo", "origem da falha", "descricao da nao conformidade"],
+            ),
+            "acao_corretiva": extract_labeled_value(
+                rnc_text,
+                ["acao corretiva", "correcao", "disposicao", "tratativa", "acao tomada"],
+            ),
+            "acao_preventiva": extract_labeled_value(
+                rnc_text,
+                ["acao preventiva", "prevencao", "acao para evitar recorrencia", "recomendacao"],
+            ),
+            "paginas_relacionadas": infer_related_pages(combined_text),
+            "tags_componentes": infer_component_tags(combined_text),
+            "observacoes": build_generated_observation(files, errors, observation_text),
+            "metadata_gerado_por": "RNC Analyst",
+            "metadata_gerado_em": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    return metadata
+
+
+def build_empty_metadata(case_id: str) -> dict[str, Any]:
+    metadata = dict(METADATA_TEMPLATE)
+    metadata["case_id"] = case_id
+    return metadata
+
+
+def collect_files_text(file_paths: list[Path], errors: list[str]) -> str:
+    parts = []
+    for file_path in file_paths:
+        extracted = extract_file_text(file_path)
+        parts.append(f"\n\n--- {file_path.name} ---\n{extracted['text'][:30000]}")
+        errors.extend(extracted["errors"])
+    return "\n".join(parts)
+
+
+def infer_project_metadata_from_pdfs(file_paths: list[Path], errors: list[str]) -> dict[str, str]:
+    inferred: dict[str, str] = {}
+    for file_path in file_paths:
+        if file_path.suffix.lower() != ".pdf":
+            continue
+        try:
+            summary = parse_pdf_bytes(file_path.read_bytes(), file_path.name)
+            merge_non_empty(inferred, summary.get("inferred", {}))
+        except Exception as exc:
+            errors.append(f"Falha ao inferir metadados de {file_path.name}: {exc}")
+    return inferred
+
+
+def infer_project_metadata_from_text(text: str) -> dict[str, str]:
+    metadata = extract_metadata_from_labels(text)
+    inferred = parse_text_project_identifiers(text)
+    merge_non_empty(metadata, inferred)
+    return metadata
+
+
+def extract_metadata_from_labels(text: str) -> dict[str, str]:
+    return {
+        "cliente": extract_labeled_value(text, ["cliente", "customer"]),
+        "documento": extract_labeled_value(text, ["documento", "doc", "codigo documento", "desenho"]),
+        "pedido": extract_labeled_value(text, ["pedido", "ordem", "op", "os"]),
+        "projeto": extract_labeled_value(text, ["projeto", "project", "painel"]),
+        "revisao": extract_labeled_value(text, ["revisao", "rev"]),
+    }
+
+
+def parse_text_project_identifiers(text: str) -> dict[str, str]:
+    document = first_match_regex(text, r"\bR\d{2}[A-Z]{2}\d{3,}[A-Z]?\.\d{2}\b")
+    order = first_match_regex(text, r"\b\d{6}\b")
+    project = first_match_regex(text, r"\bQ[A-Z]{1,3}\d+\b")
+    revision = ""
+    rev_match = re.search(r"\bREV\.?\s*([A-Z0-9-]{1,4})\b", normalize_text(text))
+    if rev_match:
+        revision = rev_match.group(1)
+    return {"documento": document, "pedido": order, "projeto": project, "revisao": revision}
+
+
+def merge_metadata_empty_fields(current: dict[str, Any], generated: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current)
+    for key, default_value in METADATA_TEMPLATE.items():
+        merged.setdefault(key, default_value)
+    for key in METADATA_TEMPLATE:
+        value = generated.get(key)
+        if is_empty_metadata_value(merged.get(key)) and not is_empty_metadata_value(value):
+            merged[key] = value
+    merged["case_id"] = generated["case_id"]
+    return merged
+
+
+def is_empty_metadata_value(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def merge_non_empty(target: dict[str, str], source: dict[str, str]) -> None:
+    for key, value in source.items():
+        if value and not target.get(key):
+            target[key] = str(value).strip()
+
+
+def first_value(*values: Any) -> str:
+    for value in values:
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def extract_labeled_value(text: str, labels: list[str], max_chars: int = 180) -> str:
+    normalized_labels = {normalize_text(label).lower() for label in labels}
+    for line in (text or "").splitlines():
+        if not any(separator in line for separator in [":", "=", "-"]):
+            continue
+        parts = re.split(r"\s*[:=\-]\s*", line, maxsplit=1)
+        if len(parts) != 2:
+            continue
+        key, value = parts
+        normalized_key = normalize_text(key).lower()
+        if normalized_key in normalized_labels:
+            return clean_metadata_value(value, max_chars=max_chars)
+    return ""
+
+
+def clean_metadata_value(value: str, *, max_chars: int) -> str:
+    value = re.sub(r"\s+", " ", value or "").strip(" :-\t")
+    return value[:max_chars].strip()
+
+
+def infer_rnc_date(text: str) -> str:
+    return first_match_regex(text, r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b") or first_match_regex(
+        text, r"\b20\d{2}-\d{2}-\d{2}\b"
+    )
+
+
+def first_match_regex(value: str, pattern: str) -> str:
+    match = re.search(pattern, value or "", flags=re.I)
+    return match.group(0).strip() if match else ""
+
+
+def infer_rnc_type(text: str) -> str:
+    normalized = normalize_text(text).lower()
+    categories = [
+        ("Cotas/dimensoes", ("cota", "dimensao", "dimensional")),
+        ("Furacao", ("furacao", "furo", "recorte")),
+        ("Layout", ("layout", "placa", "porta", "disposicao")),
+        ("Identificacao/etiquetas", ("identificacao", "etiqueta", "tag", "anilha")),
+        ("Bornes/cabos", ("borne", "cabo", "conexao", "origem", "destino")),
+        ("Componente faltante/divergente", ("componente", "faltante", "ausente", "divergente")),
+        ("Documentacao/revisao", ("documentacao", "revisao", "folha", "lista de desenho")),
+        ("Comando eletrico", ("comando", "intertravamento", "selo", "emergencia")),
+    ]
+    found = [name for name, terms in categories if any(term in normalized for term in terms)]
+    labeled = extract_labeled_value(text, ["tipo de rnc", "tipo", "categoria"])
+    if labeled and labeled not in found:
+        found.insert(0, labeled)
+    return "; ".join(found[:4])
+
+
+def infer_severity(text: str) -> str:
+    normalized = normalize_text(text).lower()
+    if any(term in normalized for term in ["critico", "grave", "alta", "parada", "seguranca"]):
+        return "alta"
+    if any(term in normalized for term in ["media", "moderado", "retrabalho", "duvida"]):
+        return "media"
+    if any(term in normalized for term in ["baixa", "menor", "observacao"]):
+        return "baixa"
+    return ""
+
+
+def infer_related_pages(text: str, limit: int = 20) -> list[int]:
+    normalized = normalize_text(text).lower()
+    pages: list[int] = []
+    for match in re.finditer(r"\b(?:pagina|pag|folha)\D{0,8}(\d{1,4})\b", normalized):
+        page = int(match.group(1))
+        if 0 < page < 2000 and page not in pages:
+            pages.append(page)
+        if len(pages) >= limit:
+            break
+    return pages
+
+
+def infer_component_tags(text: str, limit: int = 50) -> list[str]:
+    normalized = normalize_text(text)
+    pattern = r"\b(?:QF|DJ|KM|KA|K|RT|F|FU|M|IHM|CLP|PLC|INV|SS|TR|TB|X|B|S|HL|HS|PS|CR)\s*[-.]?\s*\d+[A-Z0-9.-]*\b"
+    tags: list[str] = []
+    for match in re.finditer(pattern, normalized):
+        tag = re.sub(r"\s+", "", match.group(0))
+        if tag not in tags:
+            tags.append(tag)
+        if len(tags) >= limit:
+            break
+    return tags
+
+
+def build_generated_observation(files: dict[str, list[Path]], errors: list[str], observation_text: str) -> str:
+    parts = [
+        "Metadados gerados automaticamente pelo RNC Analyst. Revise os campos antes de usar como fonte oficial."
+    ]
+    if files["project_files"]:
+        parts.append("Projeto(s): " + "; ".join(path.name for path in files["project_files"]))
+    if files["rnc_files"]:
+        parts.append("RNC(s): " + "; ".join(path.name for path in files["rnc_files"]))
+    if observation_text.strip():
+        parts.append("Observacoes existentes consideradas.")
+    if errors:
+        parts.append("Avisos: " + "; ".join(errors[:5]))
+    return " ".join(parts)
 
 
 def discover_case_files(case_dir: Path) -> dict[str, list[Path]]:

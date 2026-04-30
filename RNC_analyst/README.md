@@ -41,6 +41,21 @@ Depois de copiar sua base real para essa pasta, abra ou recarregue o RNC Analyst
 
 Arquivos reais dentro de `knowledge_base/` nao entram no Git. Apenas o README e o template `ID_TEMPLATE` sao versionados.
 
+### Metadados Automaticos
+
+`metadata.json` e `observacoes.txt` sao opcionais. Voce pode comecar apenas com os PDFs:
+
+```text
+knowledge_base/
+  ID01/
+    projeto.pdf
+    rnc.pdf
+```
+
+Na aba `Base RNC`, use o botao `Gerar metadata.json automaticamente` para criar metadados em lote. O app tenta inferir cliente, documento, pedido, projeto, revisao, tipo de RNC, paginas relacionadas e tags/componentes a partir dos arquivos da pasta.
+
+Por seguranca, valores ja preenchidos manualmente nao sao sobrescritos. Quando a opcao `Preencher campos vazios em metadata.json existentes` estiver marcada, o app completa apenas campos vazios.
+
 ## Como A Consulta Historica Funciona
 
 Ao abrir o app, a base `knowledge_base/` e varrida automaticamente. Para cada pasta `IDxx`, o sistema:

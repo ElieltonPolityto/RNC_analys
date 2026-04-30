@@ -15,6 +15,7 @@ from src.analysis import analyze_project
 from src.case_base import (
     ensure_case_base,
     fingerprint_case_base,
+    generate_metadata_files,
     index_all_cases,
     init_case_tables,
     list_case_dirs,
@@ -375,6 +376,8 @@ def render_case_base() -> None:
         f"Provedor de embedding: {vector_config.provider} | Colecao: {vector_config.collection}"
     )
 
+    render_metadata_tools(knowledge_base)
+
     if st.button("Reindexar base agora", type="primary", use_container_width=True):
         with st.spinner("Indexando casos historicos..."):
             result = index_all_cases(DB_PATH, knowledge_base, RUNTIME_DIRS["vectors"])
@@ -401,6 +404,35 @@ def render_case_base() -> None:
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("Nenhum caso indexado ainda.")
+
+
+def render_metadata_tools(knowledge_base: Path) -> None:
+    st.subheader("Metadados")
+    st.caption(
+        "Gera metadata.json automaticamente para pastas ID. "
+        "Valores ja preenchidos nao sao sobrescritos."
+    )
+    fill_existing_empty = st.checkbox(
+        "Preencher campos vazios em metadata.json existentes",
+        value=True,
+        help="Mantem valores ja preenchidos e completa apenas campos vazios.",
+    )
+    if st.button("Gerar metadata.json automaticamente", use_container_width=True):
+        with st.spinner("Gerando metadados locais e reindexando a base..."):
+            metadata_result = generate_metadata_files(
+                knowledge_base,
+                fill_existing_empty=fill_existing_empty,
+            )
+            index_result = index_all_cases(DB_PATH, knowledge_base, RUNTIME_DIRS["vectors"])
+            st.session_state["case_base_signature"] = case_base_runtime_signature(knowledge_base)
+            st.session_state["case_base_last_index_result"] = index_result
+
+        st.success(
+            "Metadados processados: "
+            f"{metadata_result['created']} criados, {metadata_result['updated']} atualizados, "
+            f"{metadata_result['skipped']} ignorados, {metadata_result['error']} erro(s)."
+        )
+        st.dataframe(pd.DataFrame(metadata_result["results"]), use_container_width=True, hide_index=True)
 
 
 def render_prompt_editor() -> None:
