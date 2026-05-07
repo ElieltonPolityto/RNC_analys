@@ -13,6 +13,7 @@ from typing import Any
 
 import pandas as pd
 
+from .database import configure_db, connect_db
 from .pdf_tools import build_text_brief, normalize_text, parse_pdf_bytes
 from .vector_store import query_vector_cases, sync_vector_index
 
@@ -157,7 +158,8 @@ def prompt_hash(content: str) -> str:
 
 def init_case_tables(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
+        configure_db(conn)
         conn.execute(CASE_TABLE_SCHEMA)
         conn.commit()
 
@@ -727,7 +729,7 @@ def upsert_case(db_path: Path, record: dict[str, Any]) -> None:
     columns = list(record.keys())
     placeholders = ", ".join("?" for _ in columns)
     updates = ", ".join(f"{column}=excluded.{column}" for column in columns if column != "case_id")
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
         conn.execute(CASE_TABLE_SCHEMA)
         conn.execute(
             f"""
@@ -742,7 +744,7 @@ def upsert_case(db_path: Path, record: dict[str, Any]) -> None:
 
 def prune_missing_cases(db_path: Path, current_case_ids: list[str]) -> int:
     init_case_tables(db_path)
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
         if current_case_ids:
             placeholders = ", ".join("?" for _ in current_case_ids)
             cursor = conn.execute(
@@ -759,7 +761,7 @@ def list_indexed_cases(db_path: Path) -> list[dict[str, Any]]:
     if not db_path.exists():
         return []
     init_case_tables(db_path)
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
@@ -776,7 +778,7 @@ def load_vector_records(db_path: Path) -> list[dict[str, Any]]:
     if not db_path.exists():
         return []
     init_case_tables(db_path)
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """

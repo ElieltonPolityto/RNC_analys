@@ -27,7 +27,7 @@ def write_reports(
     original_file_name: str,
 ) -> dict[str, Path]:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     base_name = safe_filename(original_file_name).removesuffix(".pdf")
     xlsx_path = reports_dir / f"{timestamp}_{base_name}_relatorio_rnc.xlsx"
     md_path = reports_dir / f"{timestamp}_{base_name}_relatorio_rnc.md"
@@ -61,27 +61,22 @@ def write_pdf(
     story.append(Paragraph("Revisao assistida antes do envio para producao", styles["Subtitle"]))
     story.append(Spacer(1, 0.35 * cm))
 
+    inferred = pdf_summary.get("inferred", {})
     summary_data = [
-        ["Gerado em", result.get("generated_at", "")],
-        ["Usuario", project_info.get("usuario", "")],
-        ["Cliente", project_info.get("cliente", "")],
-        ["Documento", project_info.get("documento", "")],
-        ["Pedido", project_info.get("pedido", "")],
-        ["Projeto", project_info.get("projeto", "")],
-        ["Revisao", project_info.get("revisao", "")],
-        ["Provedor", result.get("provider", "")],
-        ["Modelo", result.get("model", "")],
-        ["Status", result.get("status", "")],
-        ["Risco geral", result.get("overall_risk", "")],
-        ["Apontamentos", str(result.get("findings_count", 0))],
-        ["Severidade maxima", result.get("max_severity", "")],
-        ["Casos historicos", str(result.get("related_cases_count", 0))],
+        ["Arquivo", pdf_summary.get("file_name", "")],
+        ["Cliente", first_report_value(project_info.get("cliente"), inferred.get("cliente"))],
+        ["Documento", first_report_value(project_info.get("documento"), inferred.get("documento"))],
+        ["Pedido", first_report_value(project_info.get("pedido"), inferred.get("pedido"))],
+        ["Projeto", first_report_value(project_info.get("projeto"), inferred.get("projeto"))],
+        ["Revisao", first_report_value(project_info.get("revisao"), inferred.get("revisao"))],
+        ["Gerado em", format_report_datetime(result.get("generated_at", ""))],
     ]
+    story.append(Paragraph("Projeto analisado", styles["Heading"]))
     story.append(make_pdf_table(summary_data, styles, column_widths=[4.2 * cm, 12.0 * cm]))
     story.append(Spacer(1, 0.35 * cm))
 
-    story.append(Paragraph("Resumo", styles["Heading"]))
-    story.append(Paragraph(pdf_text(result.get("summary", "")), styles["Body"]))
+    story.append(Paragraph("Resumo da analise", styles["Heading"]))
+    story.append(Paragraph(pdf_text(compact_summary(result.get("summary", ""))), styles["Body"]))
     story.append(Spacer(1, 0.25 * cm))
 
     if result.get("provider_error"):
@@ -89,61 +84,92 @@ def write_pdf(
         story.append(Paragraph(pdf_text(result.get("provider_error")), styles["Warning"]))
         story.append(Spacer(1, 0.25 * cm))
 
-    related_cases = result.get("related_cases", [])
-    if related_cases:
-        story.append(Paragraph("Casos Historicos Relacionados", styles["Heading"]))
-        case_rows = [["ID", "Busca", "Similaridade", "Tipo RNC", "Causa raiz"]]
-        for case in related_cases[:8]:
-            case_rows.append(
-                [
-                    case.get("case_id", ""),
-                    case.get("retrieval_method", ""),
-                    f"{case.get('similarity', '')} ({case.get('score', '')})",
-                    limit_text(case.get("rnc_type", ""), 90),
-                    limit_text(case.get("root_cause", ""), 140),
-                ]
-            )
-        story.append(
-            make_pdf_table(
-                case_rows,
-                styles,
-                column_widths=[1.8 * cm, 2.0 * cm, 2.6 * cm, 4.6 * cm, 5.2 * cm],
-                has_header=True,
-            )
-        )
-        story.append(Spacer(1, 0.3 * cm))
-
-    story.append(Paragraph("Apontamentos", styles["Heading"]))
-    findings = result.get("findings", [])
+    story.append(Paragraph("Apontamentos para revisao", styles["Heading"]))
+    findings = select_pdf_findings(result.get("findings", []))
     if not findings:
         story.append(Paragraph("Nenhum apontamento registrado.", styles["Body"]))
     for index, finding in enumerate(findings, start=1):
         page = finding.get("page")
-        title = (
-            f"{index}. {finding.get('category', 'Sem categoria')} "
-            f"- {finding.get('severity', '')}"
-        )
+        title = f"{index}. {finding.get('category', 'Sem categoria')}"
         story.append(Paragraph(pdf_text(title), styles["FindingTitle"]))
         finding_rows = [
             ["Pagina", page if page is not None else "nao informada"],
-            ["Confianca", finding.get("confidence", "")],
-            ["Fonte", finding.get("source", "")],
-            ["Evidencia", limit_text(finding.get("evidence", ""), 700)],
-            ["Recomendacao", limit_text(finding.get("recommendation", ""), 700)],
+            ["Verificacao", limit_text(finding.get("evidence", ""), 520)],
+            ["Acao", limit_text(finding.get("recommendation", ""), 520)],
         ]
         story.append(make_pdf_table(finding_rows, styles, column_widths=[3.0 * cm, 13.2 * cm]))
         story.append(Spacer(1, 0.22 * cm))
 
     story.append(Spacer(1, 0.2 * cm))
-    story.append(Paragraph("Dados Tecnicos Do PDF", styles["Heading"]))
-    technical_rows = [
-        ["Paginas", pdf_summary.get("pages_count", "")],
-        ["Paginas criticas", ", ".join(str(item) for item in pdf_summary.get("critical_pages", []))],
-        ["Avisos", "; ".join(pdf_summary.get("warnings", [])) or "nenhum"],
-    ]
-    story.append(make_pdf_table(technical_rows, styles, column_widths=[4.2 * cm, 12.0 * cm]))
+    story.append(Paragraph("Orientacao para producao", styles["Heading"]))
+    story.append(Paragraph(pdf_text(build_production_guidance(result, pdf_summary)), styles["Body"]))
 
     doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+
+
+def first_report_value(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return "nao identificado"
+
+
+def format_report_datetime(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "nao identificado"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    return parsed.strftime("%d/%m/%Y %H:%M")
+
+
+def compact_summary(value: Any, max_chars: int = 900) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return "Analise concluida. Revise os apontamentos abaixo antes da liberacao para producao."
+    return limit_text(text, max_chars)
+
+
+def select_pdf_findings(findings: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    severity_order = {"alta": 0, "media": 1, "baixa": 2}
+    sorted_findings = sorted(
+        findings or [],
+        key=lambda item: (
+            severity_order.get(str(item.get("severity") or "").lower(), 1),
+            item.get("page") is None,
+            item.get("page") or 9999,
+        ),
+    )
+    return sorted_findings[:limit]
+
+
+def build_production_guidance(result: dict[str, Any], pdf_summary: dict[str, Any]) -> str:
+    findings = result.get("findings", [])
+    max_severity = str(result.get("max_severity") or "").lower()
+    warnings = pdf_summary.get("warnings") or []
+    if not findings:
+        return (
+            "Nao foram encontrados apontamentos automaticos relevantes. Ainda assim, mantenha a conferencia "
+            "tecnica padrao do projeto antes do envio para producao."
+        )
+    if max_severity == "alta":
+        return (
+            "Antes de liberar o projeto para producao, trate os apontamentos destacados e registre as correcoes "
+            "ou justificativas tecnicas aplicaveis. A liberacao deve ocorrer somente depois da conferencia dos "
+            "itens indicados neste relatorio."
+        )
+    if warnings:
+        return (
+            "O projeto pode seguir para a etapa de revisao final, mas as verificacoes acima e os avisos de leitura "
+            "do PDF devem ser conferidos antes da liberacao para producao."
+        )
+    return (
+        "O projeto pode seguir para a etapa de revisao final apos a conferencia dos apontamentos listados. "
+        "Corrija ou justifique os itens aplicaveis antes do envio para producao."
+    )
 
 
 def write_excel(
@@ -226,8 +252,6 @@ def write_markdown(
         "",
         result.get("summary", ""),
         "",
-        "## Apontamentos",
-        "",
     ]
 
     related_cases = result.get("related_cases", [])
@@ -250,7 +274,12 @@ def write_markdown(
                 ]
             )
 
-    for index, finding in enumerate(result.get("findings", []), start=1):
+    lines.extend(["## Apontamentos", ""])
+    findings = result.get("findings", [])
+    if not findings:
+        lines.extend(["Nenhum apontamento registrado.", ""])
+
+    for index, finding in enumerate(findings, start=1):
         page = finding.get("page")
         lines.extend(
             [

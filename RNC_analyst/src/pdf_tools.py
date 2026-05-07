@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import uuid
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -56,9 +57,9 @@ def ensure_runtime_dirs(base_dir: Path) -> dict[str, Path]:
 
 
 def save_uploaded_pdf(file_bytes: bytes, original_name: str, uploads_dir: Path) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     file_name = safe_filename(original_name)
-    target = uploads_dir / f"{timestamp}_{file_name}"
+    target = uploads_dir / f"{timestamp}_{uuid.uuid4().hex[:8]}_{file_name}"
     target.write_bytes(file_bytes)
     return target
 
@@ -94,7 +95,19 @@ def extract_metadata(summary_text: str, metadata: dict[str, str]) -> dict[str, s
 
 
 def parse_pdf_bytes(file_bytes: bytes, file_name: str) -> dict[str, Any]:
-    reader = PdfReader(BytesIO(file_bytes))
+    try:
+        reader = PdfReader(BytesIO(file_bytes))
+    except Exception as exc:
+        raise ValueError(f"Nao foi possivel abrir o PDF '{file_name}'. O arquivo pode estar corrompido.") from exc
+
+    if reader.is_encrypted:
+        try:
+            reader.decrypt("")
+        except Exception:
+            pass
+        if reader.is_encrypted:
+            raise ValueError(f"O PDF '{file_name}' esta protegido por senha e nao pode ser analisado.")
+
     metadata = {str(k): str(v) for k, v in (reader.metadata or {}).items()}
     pages: list[dict[str, Any]] = []
     text_parts: list[str] = []

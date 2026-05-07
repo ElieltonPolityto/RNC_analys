@@ -35,11 +35,13 @@ BASE_DIR = Path(__file__).resolve().parent
 RUNTIME_DIRS = ensure_runtime_dirs(BASE_DIR)
 CASE_BASE_PATHS = ensure_case_base(BASE_DIR)
 DB_PATH = RUNTIME_DIRS["data"] / "rnc_analyst.db"
+MAX_UPLOAD_SIZE_MB = 80
+MAX_UPLOAD_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 
 DEFAULT_MODELS = {
     "Modelo local": "local",
-    "OpenAI": "gpt-5.5",
+    "OpenAI": "gpt-5-mini",
 }
 
 
@@ -53,6 +55,9 @@ MODEL_ENV = {
 }
 
 
+st.set_page_config(page_title="RNC Analyst", layout="wide")
+
+
 @st.cache_data(show_spinner=False)
 def cached_parse_pdf(file_bytes: bytes, file_name: str) -> dict[str, Any]:
     return parse_pdf_bytes(file_bytes, file_name)
@@ -64,7 +69,6 @@ def main() -> None:
     init_case_tables(DB_PATH)
     autoindex_result = autoindex_case_base()
 
-    st.set_page_config(page_title="RNC Analyst", layout="wide")
     st.title("RNC Analyst")
     st.caption("Revisao preventiva de projetos eletricos antes do envio para producao.")
     render_autoindex_status(autoindex_result)
@@ -173,8 +177,21 @@ def render_new_analysis(provider: str, model: str, api_key: str, case_limit: int
         return
 
     file_bytes = uploaded_file.getvalue()
-    with st.spinner("Lendo PDF e extraindo metadados..."):
-        pdf_summary = cached_parse_pdf(file_bytes, uploaded_file.name)
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        st.error(f"O PDF tem mais de {MAX_UPLOAD_SIZE_MB} MB. Reduza ou divida o arquivo antes da analise.")
+        return
+
+    try:
+        with st.spinner("Lendo PDF e extraindo metadados..."):
+            pdf_summary = cached_parse_pdf(file_bytes, uploaded_file.name)
+    except ValueError as exc:
+        st.error(str(exc))
+        st.caption("Confira se o arquivo e um PDF valido, nao protegido por senha e exportado com texto pesquisavel.")
+        return
+    except Exception as exc:
+        st.error("Nao foi possivel ler o PDF enviado.")
+        st.caption(f"Detalhe tecnico: {exc}")
+        return
 
     inferred = pdf_summary.get("inferred", {})
     render_pdf_overview(pdf_summary)

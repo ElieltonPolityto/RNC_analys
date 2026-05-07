@@ -9,9 +9,11 @@ O objetivo do sistema e apontar riscos que podem gerar RNC, como cotas ausentes,
 1. Crie uma copia de `.env.example` chamada `.env`.
 2. Preencha `OPENAI_API_KEY`, quando quiser usar IA externa.
 3. Execute `iniciar_RNC_analyst.bat`.
-4. Abra a interface no navegador, se ela nao abrir automaticamente.
+4. Use a janela desktop para selecionar o PDF e iniciar a analise.
 
 Na primeira execucao, o `.bat` cria um ambiente virtual e instala as dependencias.
+
+Se precisar da interface antiga em navegador, execute `iniciar_RNC_analyst_streamlit.bat`.
 
 ## Privacidade
 
@@ -105,17 +107,17 @@ Cada analise grava o hash do prompt utilizado, permitindo rastrear quais instruc
 
 Se nenhuma chave estiver configurada, o app gera uma pre-analise local baseada no texto extraido e nas paginas criticas.
 
-O modelo padrao da OpenAI e `gpt-5.5`. No `.env`, use o ID exatamente assim:
+O modelo padrao da OpenAI e `gpt-5-mini`, escolhido para reduzir custo por analise. Para usar outro modelo, altere `OPENAI_MODEL` no `.env`:
 
 ```text
-OPENAI_MODEL=gpt-5.5
+OPENAI_MODEL=gpt-5-mini
 ```
 
 ## Relatorios
 
 Cada analise gera tres saidas locais em `reports/`:
 
-- PDF: relatorio direto para circular, anexar e arquivar.
+- PDF: relatorio enxuto para circular, anexar e arquivar.
 - Excel: dados estruturados para filtros e indicadores.
 - Markdown: versao tecnica em texto para auditoria e ajustes.
 
@@ -123,10 +125,13 @@ Cada analise gera tres saidas locais em `reports/`:
 
 ```text
 app.py
+desktop_app.py
 iniciar_RNC_analyst.bat
+iniciar_RNC_analyst_streamlit.bat
 requirements.txt
 .env.example
 src/
+  desktop_service.py
   analysis.py
   case_base.py
   database.py
