@@ -1,145 +1,186 @@
 # RNC Analyst
 
-Assistente local para revisao preventiva de projetos eletricos antes do envio para producao.
+Aplicacao local para revisao preventiva de projetos eletricos industriais antes do envio para producao.
 
-O objetivo do sistema e apontar riscos que podem gerar RNC, como cotas ausentes, divergencias entre layout e diagrama, componentes sem identificacao, etiquetas faltantes e inconsistencias de documentacao.
+## Interface Recomendada
 
-## Como Rodar
-
-1. Crie uma copia de `.env.example` chamada `.env`.
-2. Preencha `OPENAI_API_KEY`, quando quiser usar IA externa.
-3. Execute `iniciar_RNC_analyst.bat`.
-4. Use a janela desktop para selecionar o PDF e iniciar a analise.
-
-Na primeira execucao, o `.bat` cria um ambiente virtual e instala as dependencias.
-
-Se precisar da interface antiga em navegador, execute `iniciar_RNC_analyst_streamlit.bat`.
-
-## Privacidade
-
-Arquivos PDF, uploads, relatorios, banco local e `.env` ficam fora do Git por padrao. Nao suba projetos reais de cliente para o GitHub.
-
-## Base Historica de RNC
-
-O app possui uma base local para casos reais de projeto + RNC:
+Use a nova interface desktop:
 
 ```text
-knowledge_base/
-  ID01/
-    projeto.pdf
-    rnc.pdf
-    metadata.json
-    observacoes.txt
-  ID02/
-    projeto.pdf
-    rnc.pdf
-    metadata.json
-    observacoes.txt
+iniciar_RNC_analyst.bat
 ```
 
-Use uma subpasta por caso. O ID deve ser estavel (`ID01`, `ID02`, `ID03`) porque ele sera citado nos relatorios preventivos.
+Ela abre o app em PySide6. O fluxo principal e:
 
-Depois de copiar sua base real para essa pasta, abra ou recarregue o RNC Analyst. O sistema indexa automaticamente a pasta `knowledge_base`, extrai texto dos arquivos suportados, grava um indice local no SQLite e usa os casos mais parecidos durante novas analises.
+1. Selecionar PDF.
+2. Conferir leitura automatica.
+3. Clicar em `Analisar projeto`.
+4. Acompanhar o progresso de 0% a 100%.
+5. Abrir o PDF, Excel ou pasta de relatorios.
 
-Arquivos reais dentro de `knowledge_base/` nao entram no Git. Apenas o README e o template `ID_TEMPLATE` sao versionados.
+Nao ha campos obrigatorios para cliente, projeto, pedido, revisao, data ou usuario.
 
-### Metadados Automaticos
+## Interface Antiga
 
-`metadata.json` e `observacoes.txt` sao opcionais. Voce pode comecar apenas com os PDFs:
+O Streamlit continua como fallback temporario:
 
 ```text
-knowledge_base/
-  ID01/
-    projeto.pdf
-    rnc.pdf
+iniciar_RNC_analyst_streamlit.bat
 ```
 
-Na aba `Base RNC`, use o botao `Gerar metadata.json automaticamente` para criar metadados em lote. O app tenta inferir cliente, documento, pedido, projeto, revisao, tipo de RNC, paginas relacionadas e tags/componentes a partir dos arquivos da pasta.
+Use somente se precisar comparar ou contornar algum problema da interface desktop.
 
-Por seguranca, valores ja preenchidos manualmente nao sao sobrescritos. Quando a opcao `Preencher campos vazios em metadata.json existentes` estiver marcada, o app completa apenas campos vazios.
+## Primeira Execucao
 
-## Como A Consulta Historica Funciona
-
-Ao abrir o app, a base `knowledge_base/` e varrida automaticamente. Para cada pasta `IDxx`, o sistema:
-
-1. Le `metadata.json`, `observacoes.txt`, PDFs, planilhas e textos suportados.
-2. Grava o resumo tecnico no SQLite local em `data/rnc_analyst.db`.
-3. Atualiza um indice vetorial ChromaDB em `data/chroma/`.
-4. Na analise de um projeto novo, busca os casos historicos mais parecidos e anexa os resumos ao prompt enviado para a IA.
-
-Se a busca vetorial nao estiver disponivel, o app continua funcionando com busca lexical no SQLite. Isso evita parar a operacao por falha de dependencia, token ou internet.
-
-## Embeddings E Custo
-
-Por padrao, o `.env.example` usa:
+O launcher verifica as dependencias em:
 
 ```text
-EMBEDDING_PROVIDER=local_hash
+.packages_runtime\
 ```
 
-Esse modo e gratuito, local e nao envia sua base historica para terceiros. Ele cria vetores por hashing de termos tecnicos, o que e suficiente como fallback robusto, mas menos semantico que um modelo dedicado.
+Ele instala ou atualiza dependencias apenas quando:
 
-Para usar Hugging Face Inference API, altere o `.env`:
+- a pasta de dependencias ainda nao existe;
+- o Python mudou de versao;
+- o `requirements.txt` mudou;
+- o PySide6 ainda nao esta instalado.
+
+Se tudo estiver satisfeito, ele apenas inicia o app.
+
+## Configuracao Da IA
+
+Copie:
 
 ```text
-EMBEDDING_PROVIDER=huggingface
-HUGGINGFACE_API_TOKEN=hf_seu_token
-HUGGINGFACE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-HUGGINGFACE_EMBEDDING_URL=
+.env.example
 ```
 
-Deixe `HUGGINGFACE_EMBEDDING_URL` vazio. O app usa o SDK oficial da Hugging Face, que chama o roteador atual de Inference Providers. Preencha essa URL somente se voce quiser forcar um endpoint especifico.
-
-Nesse modo, os textos usados para indexacao e consulta sao enviados ao Hugging Face para gerar embeddings. Consulte limites e politica de custo da sua conta antes de usar com documentos de cliente.
-
-Tokens da OpenAI sao consumidos somente quando voce escolhe `OpenAI` para gerar a analise final. A leitura da base local, o SQLite e o ChromaDB local nao consomem tokens da OpenAI. Se `EMBEDDING_PROVIDER=huggingface`, a etapa de embeddings consome a cota do Hugging Face, nao da OpenAI.
-
-## Prompt Base
-
-O arquivo `prompts/instrucoes_base.txt` contem as instrucoes operacionais fixas usadas nas chamadas de IA. Ele tambem pode ser editado na aba `Prompt` do app.
-
-Cada analise grava o hash do prompt utilizado, permitindo rastrear quais instrucoes estavam vigentes quando o relatorio foi gerado.
-
-## Modos De Analise
-
-- OpenAI: usa a chave `OPENAI_API_KEY` configurada no arquivo `.env`.
-- Modelo local: executa a pre-analise local sem chamar API externa.
-
-Se nenhuma chave estiver configurada, o app gera uma pre-analise local baseada no texto extraido e nas paginas criticas.
-
-O modelo padrao da OpenAI e `gpt-5-mini`, escolhido para reduzir custo por analise. Para usar outro modelo, altere `OPENAI_MODEL` no `.env`:
+para:
 
 ```text
+.env
+```
+
+Configure quando quiser usar OpenAI:
+
+```text
+OPENAI_API_KEY=sua_chave_aqui
 OPENAI_MODEL=gpt-5-mini
+```
+
+O modelo padrao e `gpt-5-mini` para reduzir custo.
+
+Sem `OPENAI_API_KEY`, a aplicacao roda a pre-analise local automaticamente.
+
+Na aba `Configuracoes`, voce pode trocar o modelo OpenAI. A tela principal mostra:
+
+- `IA economica: gpt-5-mini`
+- `IA avancada: <modelo>` quando outro modelo estiver configurado
+
+## Prompt Efetivo
+
+Para verificar o prompt antes de gastar uma chamada de IA:
+
+1. Selecione um PDF.
+2. Abra a aba `Configuracoes`.
+3. Clique em `Ver prompt da proxima analise`.
+
+O app mostra exatamente o `SYSTEM INSTRUCTIONS` e o `USER PROMPT` que serao enviados para o modelo.
+
+O prompt base editavel fica em:
+
+```text
+prompts\instrucoes_base.txt
 ```
 
 ## Relatorios
 
-Cada analise gera tres saidas locais em `reports/`:
-
-- PDF: relatorio enxuto para circular, anexar e arquivar.
-- Excel: dados estruturados para filtros e indicadores.
-- Markdown: versao tecnica em texto para auditoria e ajustes.
-
-## Estrutura
+A analise gera arquivos em:
 
 ```text
-app.py
+reports\
+```
+
+Saidas geradas:
+
+- PDF: relatorio curto para uso operacional.
+- Excel: dados estruturados para filtro e conferencia.
+- Markdown: trilha tecnica para auditoria.
+
+O PDF principal evita metricas internas e mantem o foco em:
+
+- Resumo da analise.
+- Apontamentos para revisao.
+- Orientacao para producao.
+
+## Base RNC
+
+A estrutura da base historica continua preservada para uso futuro:
+
+```text
+knowledge_base\
+  ID_TEMPLATE\
+```
+
+Neste momento, a analise principal nao busca casos historicos nem envia IDs de RNC para o prompt. A aba `Base RNC` fica como area de manutencao futura.
+
+## Privacidade
+
+Estes itens nao devem ser enviados ao GitHub:
+
+- `.env`
+- PDFs reais
+- `uploads\`
+- `reports\`
+- `data\`
+- `.packages\`
+- `.packages_runtime\`
+
+Nao suba documentos reais de cliente no GitHub.
+
+## Estrutura Principal
+
+```text
 desktop_app.py
+app.py
 iniciar_RNC_analyst.bat
 iniciar_RNC_analyst_streamlit.bat
 requirements.txt
 .env.example
-src/
+prompts\
+  instrucoes_base.txt
+src\
   desktop_service.py
   analysis.py
-  case_base.py
-  database.py
-  pdf_tools.py
   prompts.py
   report_writer.py
+  pdf_tools.py
+  database.py
+  case_base.py
   vector_store.py
-  ai_providers/
-    openai_provider.py
-    utils.py
+  ai_providers\
+tests\
+```
+
+## Validacao Para Desenvolvimento
+
+Com o runtime/dependencias configurados:
+
+```powershell
+python -m unittest discover -s tests
+python -m py_compile desktop_app.py src\desktop_service.py src\prompts.py src\analysis.py src\report_writer.py
+```
+
+## Uso Rapido
+
+Abra:
+
+```text
+iniciar_RNC_analyst.bat
+```
+
+Selecione um PDF e clique em:
+
+```text
+Analisar projeto
 ```

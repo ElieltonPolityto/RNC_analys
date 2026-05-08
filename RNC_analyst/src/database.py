@@ -43,9 +43,20 @@ ANALYSIS_EXTRA_COLUMNS = {
 }
 
 
+def connect_db(db_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
+
+
+def configure_db(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA journal_mode = WAL")
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
+        configure_db(conn)
         conn.execute(SCHEMA)
         ensure_columns(conn, "analyses", ANALYSIS_EXTRA_COLUMNS)
         conn.commit()
@@ -94,7 +105,7 @@ def save_analysis(db_path: Path, record: dict[str, Any]) -> int:
         payload.append(value)
 
     placeholders = ", ".join("?" for _ in columns)
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
         cursor = conn.execute(
             f"INSERT INTO analyses ({', '.join(columns)}) VALUES ({placeholders})",
             payload,
@@ -106,7 +117,7 @@ def save_analysis(db_path: Path, record: dict[str, Any]) -> int:
 def list_analyses(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
     if not db_path.exists():
         return []
-    with sqlite3.connect(db_path) as conn:
+    with connect_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """

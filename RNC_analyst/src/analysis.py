@@ -4,12 +4,24 @@ from datetime import datetime
 from typing import Any
 
 from .ai_providers import openai_provider
-from .case_base import build_cases_prompt_context
 from .pdf_tools import build_text_brief
 from .prompts import build_review_prompt
 
 
 SEVERITY_ORDER = {"baixa": 1, "media": 2, "alta": 3}
+SEVERITY_ALIASES = {
+    "baixa": "baixa",
+    "baixo": "baixa",
+    "low": "baixa",
+    "media": "media",
+    "média": "media",
+    "medio": "media",
+    "médio": "media",
+    "medium": "media",
+    "alta": "alta",
+    "alto": "alta",
+    "high": "alta",
+}
 
 
 def analyze_project(
@@ -26,12 +38,10 @@ def analyze_project(
 ) -> dict[str, Any]:
     similar_cases = similar_cases or []
     text_brief = build_text_brief(pdf_summary)
-    similar_cases_context = build_cases_prompt_context(similar_cases)
     prompt = build_review_prompt(
         project_info,
         text_brief,
         base_instructions=base_instructions,
-        similar_cases_context=similar_cases_context,
     )
     local_findings = build_local_findings(pdf_summary, project_info, similar_cases)
 
@@ -96,43 +106,6 @@ def build_local_findings(
     similar_cases = similar_cases or []
     pages = pdf_summary.get("pages", [])
     critical_pages = pdf_summary.get("critical_pages", [])
-    inferred = pdf_summary.get("inferred", {})
-
-    if not (project_info.get("cliente") or inferred.get("cliente")):
-        findings.append(
-            make_finding(
-                severity="media",
-                category="Cadastro/documentacao",
-                page=1,
-                evidence="Cliente nao identificado automaticamente no PDF.",
-                recommendation="Confirmar se o campo de cliente esta preenchido e legivel no projeto.",
-                confidence=0.55,
-            )
-        )
-
-    if not (project_info.get("documento") or inferred.get("documento")):
-        findings.append(
-            make_finding(
-                severity="media",
-                category="Cadastro/documentacao",
-                page=1,
-                evidence="Documento do projeto nao identificado automaticamente.",
-                recommendation="Confirmar numero de documento antes do envio para a fabrica.",
-                confidence=0.55,
-            )
-        )
-
-    if not project_info.get("revisao"):
-        findings.append(
-            make_finding(
-                severity="baixa",
-                category="Revisao",
-                page=1,
-                evidence="Revisao nao informada pelo usuario no cadastro da analise.",
-                recommendation="Informar a revisao analisada para manter rastreabilidade.",
-                confidence=0.8,
-            )
-        )
 
     sparse_critical = [
         page
@@ -159,28 +132,9 @@ def build_local_findings(
                 severity="baixa",
                 category="Escopo de revisao",
                 page=None,
-                evidence=f"Paginas classificadas como criticas para RNC: {page_list}.",
+                evidence=f"Paginas classificadas como criticas para revisao: {page_list}.",
                 recommendation="Usar estas paginas como fila de revisao tecnica antes da liberacao.",
                 confidence=0.7,
-            )
-        )
-
-    for case in similar_cases[:5]:
-        severity = "media" if case.get("similarity") in {"alta", "media"} else "baixa"
-        findings.append(
-            make_finding(
-                severity=severity,
-                category="Historico RNC",
-                page=None,
-                evidence=(
-                    f"Caso historico {case.get('case_id')} com similaridade {case.get('similarity')} "
-                    f"(score {case.get('score')}). Tipo de RNC: {case.get('rnc_type') or 'nao informado'}."
-                ),
-                recommendation=(
-                    "Comparar o projeto atual com esse caso antes da liberacao. "
-                    f"Causa historica: {case.get('root_cause') or 'nao informada'}."
-                ),
-                confidence=float(case.get("score") or 0.4),
             )
         )
 
@@ -209,26 +163,39 @@ def make_finding(
     confidence: float,
 ) -> dict[str, Any]:
     return {
-        "severity": severity,
+        "severity": normalize_severity(severity),
         "category": category,
         "page": page,
         "evidence": evidence,
         "recommendation": recommendation,
-        "confidence": confidence,
+        "confidence": coerce_confidence(confidence),
         "source": "triagem_local",
     }
 
 
 def normalize_finding(item: dict[str, Any], source: str) -> dict[str, Any]:
     return {
-        "severity": item.get("severity") or "media",
+        "severity": normalize_severity(item.get("severity")),
         "category": item.get("category") or "Sem categoria",
         "page": item.get("page"),
         "evidence": item.get("evidence") or "",
         "recommendation": item.get("recommendation") or "",
-        "confidence": float(item.get("confidence") or 0.5),
+        "confidence": coerce_confidence(item.get("confidence")),
         "source": source,
     }
+
+
+def normalize_severity(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return SEVERITY_ALIASES.get(normalized, "media")
+
+
+def coerce_confidence(value: Any, *, default: float = 0.5) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = default
+    return max(0.0, min(1.0, confidence))
 
 
 def build_result(
@@ -271,4 +238,4 @@ def estimate_overall_risk(findings: list[dict[str, Any]]) -> str:
 def max_severity(findings: list[dict[str, Any]]) -> str:
     if not findings:
         return "baixa"
-    return max((item.get("severity", "baixa") for item in findings), key=lambda x: SEVERITY_ORDER.get(x, 0))
+    return max((normalize_severity(item.get("severity")) for item in findings), key=lambda x: SEVERITY_ORDER.get(x, 0))

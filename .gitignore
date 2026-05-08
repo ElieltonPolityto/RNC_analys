@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.claude/
 RNC_analyst/.packages/
 RNC_analyst/.packages_runtime/
 *.log

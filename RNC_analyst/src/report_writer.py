@@ -66,10 +66,6 @@ def write_pdf(
         ["Arquivo", pdf_summary.get("file_name", "")],
         ["Cliente", first_report_value(project_info.get("cliente"), inferred.get("cliente"))],
         ["Documento", first_report_value(project_info.get("documento"), inferred.get("documento"))],
-        ["Pedido", first_report_value(project_info.get("pedido"), inferred.get("pedido"))],
-        ["Projeto", first_report_value(project_info.get("projeto"), inferred.get("projeto"))],
-        ["Revisao", first_report_value(project_info.get("revisao"), inferred.get("revisao"))],
-        ["Gerado em", format_report_datetime(result.get("generated_at", ""))],
     ]
     story.append(Paragraph("Projeto analisado", styles["Heading"]))
     story.append(make_pdf_table(summary_data, styles, column_widths=[4.2 * cm, 12.0 * cm]))

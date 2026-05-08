@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:
     from dotenv import load_dotenv
@@ -26,10 +26,10 @@ from .case_base import (
     load_base_instructions,
     prompt_hash,
     save_base_instructions,
-    search_similar_cases,
 )
 from .database import init_db, list_analyses, save_analysis
-from .pdf_tools import ensure_runtime_dirs, parse_pdf_bytes, save_uploaded_pdf
+from .pdf_tools import build_text_brief, ensure_runtime_dirs, parse_pdf_bytes, save_uploaded_pdf
+from .prompts import SYSTEM_INSTRUCTIONS, build_review_prompt
 from .report_writer import write_reports
 from .vector_store import load_vector_config
 
@@ -38,6 +38,7 @@ DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 MAX_UPLOAD_SIZE_MB = 80
 MAX_UPLOAD_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 DEFAULT_CASE_LIMIT = 5
+ProgressCallback = Callable[[int, str], None]
 
 
 @dataclass(frozen=True)
@@ -83,9 +84,30 @@ def openai_model() -> str:
     return normalize_model_id(os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
 
 
+def save_openai_model(base_dir: Path, model: str) -> str:
+    normalized = normalize_model_id(model)
+    env_path = base_dir / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    updated = False
+    for index, line in enumerate(lines):
+        if line.strip().startswith("OPENAI_MODEL="):
+            lines[index] = f"OPENAI_MODEL={normalized}"
+            updated = True
+            break
+    if not updated:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"OPENAI_MODEL={normalized}")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ["OPENAI_MODEL"] = normalized
+    return normalized
+
+
 def ai_mode_label() -> str:
     model = openai_model()
-    return "IA: economica" if model == DEFAULT_OPENAI_MODEL else "IA: avancada"
+    if model == DEFAULT_OPENAI_MODEL:
+        return f"IA economica: {model}"
+    return f"IA avancada: {model}"
 
 
 def normalize_model_id(value: str) -> str:
@@ -106,26 +128,47 @@ def load_pdf(path: Path) -> PdfLoadResult:
     return PdfLoadResult(path=path, bytes_data=file_bytes, summary=summary)
 
 
-def run_analysis(context: DesktopContext, loaded_pdf: PdfLoadResult) -> AnalysisResult:
+def build_effective_prompt(context: DesktopContext, loaded_pdf: PdfLoadResult) -> str:
+    base_instructions = load_base_instructions(context.case_base_paths["instructions"])
+    project_info = build_project_info(loaded_pdf.summary.get("inferred", {}))
+    user_prompt = build_review_prompt(
+        project_info,
+        build_text_brief(loaded_pdf.summary),
+        base_instructions=base_instructions,
+    )
+    return "\n\n".join(
+        [
+            "=== SYSTEM INSTRUCTIONS ===",
+            SYSTEM_INSTRUCTIONS,
+            "=== USER PROMPT ===",
+            user_prompt,
+        ]
+    )
+
+
+def run_analysis(
+    context: DesktopContext,
+    loaded_pdf: PdfLoadResult,
+    progress: ProgressCallback | None = None,
+) -> AnalysisResult:
+    emit_progress(progress, 0, "Preparando analise")
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     provider = "OpenAI" if api_key else "Modelo local"
     model = openai_model() if api_key else "local"
     inferred = loaded_pdf.summary.get("inferred", {})
     project_info = build_project_info(inferred)
 
+    emit_progress(progress, 10, "Salvando PDF local")
     upload_path = save_uploaded_pdf(
         loaded_pdf.bytes_data,
         loaded_pdf.path.name,
         context.runtime_dirs["uploads"],
     )
+    emit_progress(progress, 20, "Carregando instrucoes")
     base_instructions = load_base_instructions(context.case_base_paths["instructions"])
-    similar_cases = search_similar_cases(
-        context.db_path,
-        pdf_summary=loaded_pdf.summary,
-        project_info=project_info,
-        limit=DEFAULT_CASE_LIMIT,
-        vector_dir=context.runtime_dirs["vectors"],
-    )
+    emit_progress(progress, 35, "Preparando contexto")
+    similar_cases: list[dict[str, Any]] = []
+    emit_progress(progress, 50, "Executando analise com IA/local")
     result = analyze_project(
         provider=provider,
         api_key=api_key,
@@ -137,6 +180,7 @@ def run_analysis(context: DesktopContext, loaded_pdf: PdfLoadResult) -> Analysis
         base_instructions=base_instructions,
         similar_cases=similar_cases,
     )
+    emit_progress(progress, 80, "Gerando relatorios")
     report_paths = write_reports(
         reports_dir=context.runtime_dirs["reports"],
         project_info=project_info,
@@ -144,6 +188,7 @@ def run_analysis(context: DesktopContext, loaded_pdf: PdfLoadResult) -> Analysis
         pdf_summary=loaded_pdf.summary,
         original_file_name=loaded_pdf.path.name,
     )
+    emit_progress(progress, 90, "Salvando historico")
     record = build_record(
         project_info=project_info,
         result=result,
@@ -156,6 +201,7 @@ def run_analysis(context: DesktopContext, loaded_pdf: PdfLoadResult) -> Analysis
         base_prompt_path=context.case_base_paths["instructions"],
     )
     analysis_id = save_analysis(context.db_path, record)
+    emit_progress(progress, 100, "Analise concluida")
     return AnalysisResult(
         analysis_id=analysis_id,
         result=result,
@@ -163,6 +209,11 @@ def run_analysis(context: DesktopContext, loaded_pdf: PdfLoadResult) -> Analysis
         project_info=project_info,
         pdf_summary=loaded_pdf.summary,
     )
+
+
+def emit_progress(progress: ProgressCallback | None, percent: int, message: str) -> None:
+    if progress is not None:
+        progress(max(0, min(100, percent)), message)
 
 
 def build_project_info(inferred: dict[str, Any]) -> dict[str, str]:

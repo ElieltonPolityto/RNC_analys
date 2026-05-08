@@ -5,11 +5,12 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QThread, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -34,19 +35,48 @@ from src import desktop_service as service
 BASE_DIR = Path(__file__).resolve().parent
 
 
+DIALOG_STYLESHEET = """
+QMessageBox, QDialog {
+    background: #f8fafc;
+}
+QLabel {
+    color: #111827;
+    background: transparent;
+}
+QPushButton {
+    background: #ffffff;
+    color: #111827;
+    border: 1px solid #8da0b7;
+    padding: 7px 14px;
+    font-weight: 600;
+}
+QPushButton:hover {
+    background: #eef5ff;
+}
+"""
+
+
 class TaskThread(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
+    progress_changed = Signal(int, str)
 
-    def __init__(self, fn: Callable[[], Any]) -> None:
+    def __init__(self, fn: Callable[..., Any], *, with_progress: bool = False) -> None:
         super().__init__()
         self.fn = fn
+        self.with_progress = with_progress
 
     def run(self) -> None:
         try:
-            self.succeeded.emit(self.fn())
+            if self.with_progress:
+                self.succeeded.emit(self.fn(self.emit_progress))
+            else:
+                self.succeeded.emit(self.fn())
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    def emit_progress(self, percent: int, message: str) -> None:
+        self.progress_changed.emit(max(0, min(100, percent)), message)
 
 
 class RncAnalystWindow(QMainWindow):
@@ -56,6 +86,11 @@ class RncAnalystWindow(QMainWindow):
         self.loaded_pdf: service.PdfLoadResult | None = None
         self.analysis_result: service.AnalysisResult | None = None
         self.active_tasks: list[TaskThread] = []
+        self.last_progress_percent = 0
+        self.last_progress_message = ""
+        self.ai_progress_timer = QTimer(self)
+        self.ai_progress_timer.setInterval(900)
+        self.ai_progress_timer.timeout.connect(self.advance_ai_progress)
 
         self.setWindowTitle("RNC Analyst")
         self.resize(1120, 760)
@@ -75,8 +110,10 @@ class RncAnalystWindow(QMainWindow):
 
     def build_new_analysis_tab(self) -> None:
         page = QWidget()
+        page.setObjectName("Page")
         layout = QVBoxLayout(page)
         layout.setSpacing(12)
+        layout.setContentsMargins(22, 18, 22, 18)
 
         title = QLabel("Nova analise")
         title.setObjectName("Title")
@@ -86,30 +123,40 @@ class RncAnalystWindow(QMainWindow):
         self.mode_label.setObjectName("StatusPill")
         layout.addWidget(self.mode_label)
 
+        layout.addWidget(self.section_label("1. Projeto"))
         file_row = QHBoxLayout()
         self.select_pdf_button = QPushButton("Selecionar PDF")
+        self.select_pdf_button.setObjectName("PrimaryButton")
         self.select_pdf_button.clicked.connect(self.select_pdf)
         self.file_label = QLabel("Nenhum PDF selecionado.")
+        self.file_label.setObjectName("InfoBox")
         self.file_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         file_row.addWidget(self.select_pdf_button)
         file_row.addWidget(self.file_label, stretch=1)
         layout.addLayout(file_row)
 
+        layout.addWidget(self.section_label("2. Leitura automatica"))
         self.status_label = QLabel("Selecione um PDF para iniciar.")
+        self.status_label.setObjectName("StatusBox")
         layout.addWidget(self.status_label)
 
         self.detected_label = QLabel("Dados detectados: aguardando PDF.")
+        self.detected_label.setObjectName("InfoBox")
         self.detected_label.setWordWrap(True)
         layout.addWidget(self.detected_label)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
+        self.progress.setTextVisible(True)
+        self.progress.setFormat("%p%")
         self.progress.setVisible(False)
         layout.addWidget(self.progress)
 
+        layout.addWidget(self.section_label("3. Analise"))
         action_row = QHBoxLayout()
         self.analyze_button = QPushButton("Analisar projeto")
+        self.analyze_button.setObjectName("PrimaryButton")
         self.analyze_button.setEnabled(False)
         self.analyze_button.clicked.connect(self.analyze_project)
         self.open_pdf_button = QPushButton("Abrir PDF")
@@ -128,6 +175,7 @@ class RncAnalystWindow(QMainWindow):
         action_row.addStretch(1)
         layout.addLayout(action_row)
 
+        layout.addWidget(self.section_label("4. Relatorio"))
         self.result_text = QTextEdit()
         self.result_text.setReadOnly(True)
         self.result_text.setPlaceholderText("O resultado da analise aparecera aqui.")
@@ -135,9 +183,16 @@ class RncAnalystWindow(QMainWindow):
 
         self.tabs.addTab(page, "Nova analise")
 
+    def section_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("SectionTitle")
+        return label
+
     def build_history_tab(self) -> None:
         page = QWidget()
+        page.setObjectName("Page")
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 18, 22, 18)
         row = QHBoxLayout()
         refresh = QPushButton("Atualizar historico")
         refresh.clicked.connect(self.refresh_history)
@@ -155,8 +210,11 @@ class RncAnalystWindow(QMainWindow):
 
     def build_case_base_tab(self) -> None:
         page = QWidget()
+        page.setObjectName("Page")
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 18, 22, 18)
         self.case_status_label = QLabel("Base RNC: verificando...")
+        self.case_status_label.setObjectName("StatusBox")
         layout.addWidget(self.case_status_label)
         row = QHBoxLayout()
         reindex = QPushButton("Reindexar base")
@@ -178,10 +236,50 @@ class RncAnalystWindow(QMainWindow):
 
     def build_settings_tab(self) -> None:
         page = QWidget()
+        page.setObjectName("Page")
         layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+        layout.setContentsMargins(22, 18, 22, 18)
         self.settings_label = QLabel(self.settings_text())
+        self.settings_label.setObjectName("InfoBox")
         self.settings_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.settings_label)
+
+        model_row = QHBoxLayout()
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.addItems(["gpt-5-mini", "gpt-5", "gpt-5.1", "gpt-5.2"])
+        self.model_combo.setCurrentText(service.openai_model())
+        self.save_model_button = QPushButton("Salvar modelo de IA")
+        self.save_model_button.setObjectName("PrimaryButton")
+        self.save_model_button.clicked.connect(self.confirm_save_model)
+        model_row.addWidget(QLabel("Modelo OpenAI"))
+        model_row.addWidget(self.model_combo, stretch=1)
+        model_row.addWidget(self.save_model_button)
+        layout.addLayout(model_row)
+        model_help = QLabel("gpt-5-mini reduz custo. Use modelos maiores apenas quando precisar de revisao mais profunda.")
+        model_help.setObjectName("Hint")
+        model_help.setWordWrap(True)
+        layout.addWidget(model_help)
+
+        layout.addWidget(self.section_label("Prompt efetivo da proxima analise"))
+        prompt_preview_row = QHBoxLayout()
+        self.prompt_preview_button = QPushButton("Ver prompt da proxima analise")
+        self.prompt_preview_button.clicked.connect(self.show_effective_prompt)
+        prompt_preview_row.addWidget(self.prompt_preview_button)
+        prompt_preview_row.addStretch(1)
+        layout.addLayout(prompt_preview_row)
+        preview_help = QLabel("Mostra exatamente o SYSTEM e o USER prompt que serao enviados para o modelo, usando o prompt base salvo.")
+        preview_help.setObjectName("Hint")
+        preview_help.setWordWrap(True)
+        layout.addWidget(preview_help)
+        self.effective_prompt_preview = QPlainTextEdit()
+        self.effective_prompt_preview.setReadOnly(True)
+        self.effective_prompt_preview.setPlaceholderText("Selecione um PDF na aba Nova analise e clique em Ver prompt da proxima analise.")
+        self.effective_prompt_preview.setMinimumHeight(180)
+        layout.addWidget(self.effective_prompt_preview, stretch=1)
+
+        layout.addWidget(self.section_label("Prompt base editavel"))
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setPlainText(service.load_prompt(self.context))
         layout.addWidget(self.prompt_edit, stretch=1)
@@ -235,13 +333,19 @@ class RncAnalystWindow(QMainWindow):
     def analyze_project(self) -> None:
         if self.loaded_pdf is None:
             return
-        self.set_busy("Executando analise...")
+        self.set_progress(0, "Preparando analise")
         self.analyze_button.setEnabled(False)
-        self.run_task(lambda: service.run_analysis(self.context, self.loaded_pdf), self.on_analysis_done, self.on_task_error)
+        self.run_task(
+            lambda progress: service.run_analysis(self.context, self.loaded_pdf, progress=progress),
+            self.on_analysis_done,
+            self.on_task_error,
+            with_progress=True,
+        )
 
     def on_analysis_done(self, result: service.AnalysisResult) -> None:
         self.analysis_result = result
-        self.set_idle()
+        self.stop_ai_progress()
+        self.set_progress(100, "Analise concluida")
         self.analyze_button.setEnabled(True)
         self.set_report_buttons(True)
         self.result_text.setPlainText(
@@ -287,8 +391,7 @@ class RncAnalystWindow(QMainWindow):
     def on_metadata_done(self, result: dict[str, Any]) -> None:
         self.set_idle()
         metadata = result.get("metadata", {})
-        QMessageBox.information(
-            self,
+        self.show_info(
             "Metadados",
             "Metadados processados: "
             f"{metadata.get('created', 0)} criados, {metadata.get('updated', 0)} atualizados, "
@@ -300,7 +403,36 @@ class RncAnalystWindow(QMainWindow):
         if not self.ask_confirm("Salvar alteracoes no prompt base?"):
             return
         digest = service.save_prompt(self.context, self.prompt_edit.toPlainText())
-        QMessageBox.information(self, "Prompt salvo", f"Prompt salvo. Hash: {digest}")
+        self.show_info("Prompt salvo", f"Prompt salvo. Hash: {digest}")
+
+    def confirm_save_model(self) -> None:
+        model = self.model_combo.currentText().strip()
+        if not model:
+            self.show_warning("Modelo invalido", "Informe um modelo OpenAI valido.")
+            return
+        normalized = service.save_openai_model(BASE_DIR, model)
+        self.model_combo.setCurrentText(normalized)
+        self.mode_label.setText(service.ai_mode_label())
+        self.settings_label.setText(self.settings_text())
+        self.show_info(
+            "Modelo salvo",
+            f"Modelo OpenAI salvo como {normalized}.\nA proxima analise ja usara essa configuracao.",
+        )
+
+    def show_effective_prompt(self) -> None:
+        if self.loaded_pdf is None:
+            self.show_warning(
+                "Prompt efetivo",
+                "Selecione um PDF na aba Nova analise para montar o prompt efetivo da proxima analise.",
+            )
+            return
+        try:
+            prompt = service.build_effective_prompt(self.context, self.loaded_pdf)
+        except Exception as exc:
+            self.show_warning("Prompt efetivo", f"Nao foi possivel montar o prompt efetivo.\n\n{exc}")
+            return
+        self.effective_prompt_preview.setPlainText(prompt)
+        self.tabs.setCurrentWidget(self.effective_prompt_preview.parentWidget())
 
     def refresh_history(self) -> None:
         rows = service.history_rows(self.context)
@@ -356,7 +488,7 @@ class RncAnalystWindow(QMainWindow):
 
     def open_path(self, path: Path) -> None:
         if not path.exists():
-            QMessageBox.warning(self, "Arquivo nao encontrado", f"Nao foi possivel abrir:\n{path}")
+            self.show_warning("Arquivo nao encontrado", f"Nao foi possivel abrir:\n{path}")
             return
         if os.name == "nt":
             os.startfile(str(path))  # type: ignore[attr-defined]
@@ -365,14 +497,17 @@ class RncAnalystWindow(QMainWindow):
 
     def run_task(
         self,
-        fn: Callable[[], Any],
+        fn: Callable[..., Any],
         on_success: Callable[[Any], None],
         on_error: Callable[[str], None],
+        *,
+        with_progress: bool = False,
     ) -> None:
-        thread = TaskThread(fn)
+        thread = TaskThread(fn, with_progress=with_progress)
         self.active_tasks.append(thread)
         thread.succeeded.connect(on_success)
         thread.failed.connect(on_error)
+        thread.progress_changed.connect(self.on_progress_changed)
         thread.finished.connect(lambda: self.task_finished(thread))
         thread.start()
 
@@ -381,13 +516,45 @@ class RncAnalystWindow(QMainWindow):
             self.active_tasks.remove(thread)
 
     def on_task_error(self, message: str) -> None:
-        self.set_idle()
+        self.stop_ai_progress()
+        self.status_label.setText(f"{self.last_progress_message or 'Falha na operacao'} - erro")
+        self.progress.setVisible(self.last_progress_percent > 0)
         self.analyze_button.setEnabled(self.loaded_pdf is not None)
-        QMessageBox.warning(self, "RNC Analyst", message)
+        self.show_warning("RNC Analyst", f"{message}\n\nConfira o arquivo e tente novamente.")
+
+    def on_progress_changed(self, percent: int, message: str) -> None:
+        self.set_progress(percent, message)
+        if 50 <= percent < 80:
+            self.start_ai_progress()
+        else:
+            self.stop_ai_progress()
+
+    def set_progress(self, percent: int, message: str) -> None:
+        self.last_progress_percent = max(0, min(100, percent))
+        self.last_progress_message = message
+        self.status_label.setText(f"{message}... {self.last_progress_percent}%")
+        self.progress.setRange(0, 100)
+        self.progress.setValue(self.last_progress_percent)
+        self.progress.setFormat(f"{self.last_progress_percent}%")
+        self.progress.setVisible(True)
+
+    def start_ai_progress(self) -> None:
+        if not self.ai_progress_timer.isActive():
+            self.ai_progress_timer.start()
+
+    def stop_ai_progress(self) -> None:
+        if self.ai_progress_timer.isActive():
+            self.ai_progress_timer.stop()
+
+    def advance_ai_progress(self) -> None:
+        if self.last_progress_percent < 79:
+            self.set_progress(self.last_progress_percent + 1, self.last_progress_message or "Executando analise")
 
     def set_busy(self, message: str) -> None:
         self.status_label.setText(message)
-        self.progress.setRange(0, 0)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("0%")
         self.progress.setVisible(True)
         self.select_pdf_button.setEnabled(False)
 
@@ -402,10 +569,24 @@ class RncAnalystWindow(QMainWindow):
         self.open_folder_button.setEnabled(enabled)
 
     def ask_confirm(self, message: str) -> bool:
-        return (
-            QMessageBox.question(self, "Confirmar", message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            == QMessageBox.Yes
-        )
+        box = self.build_message_box(QMessageBox.Question, "Confirmar", message)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        return box.exec() == QMessageBox.Yes
+
+    def show_info(self, title: str, message: str) -> None:
+        self.build_message_box(QMessageBox.Information, title, message).exec()
+
+    def show_warning(self, title: str, message: str) -> None:
+        self.build_message_box(QMessageBox.Warning, title, message).exec()
+
+    def build_message_box(self, icon: QMessageBox.Icon, title: str, message: str) -> QMessageBox:
+        box = QMessageBox(self)
+        box.setIcon(icon)
+        box.setWindowTitle(title)
+        box.setText(message)
+        box.setStyleSheet(DIALOG_STYLESHEET)
+        return box
 
     def closeEvent(self, event: Any) -> None:
         if any(task.isRunning() for task in self.active_tasks):
@@ -426,13 +607,168 @@ class RncAnalystWindow(QMainWindow):
 
 
 def apply_style(app: QApplication) -> None:
+    app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor("#eef2f7"))
+    palette.setColor(QPalette.WindowText, QColor("#111827"))
+    palette.setColor(QPalette.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.AlternateBase, QColor("#f1f5f9"))
+    palette.setColor(QPalette.Text, QColor("#111827"))
+    palette.setColor(QPalette.Button, QColor("#ffffff"))
+    palette.setColor(QPalette.ButtonText, QColor("#111827"))
+    palette.setColor(QPalette.Highlight, QColor("#b9daf7"))
+    palette.setColor(QPalette.HighlightedText, QColor("#0f172a"))
+    palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipText, QColor("#111827"))
+    app.setPalette(palette)
     app.setStyleSheet(
         """
-        QMainWindow { background: #f7f8fa; }
-        QLabel#Title { font-size: 22px; font-weight: 700; color: #1f2937; }
-        QLabel#StatusPill { color: #0f766e; font-weight: 600; padding: 4px 0; }
-        QPushButton { padding: 8px 12px; }
-        QTextEdit, QPlainTextEdit, QTableWidget { background: white; border: 1px solid #d1d5db; }
+        * {
+            font-family: "Segoe UI", Arial, sans-serif;
+            font-size: 10.5pt;
+            color: #111827;
+        }
+        QWidget, QDialog, QMessageBox, QFileDialog, QMainWindow, QTabWidget::pane {
+            background: #eef2f7;
+            color: #111827;
+        }
+        QWidget#Page {
+            background: #eef2f7;
+        }
+        QLabel {
+            background: transparent;
+            color: #111827;
+        }
+        QTabBar::tab {
+            background: #dde5ef;
+            color: #1f2937;
+            padding: 9px 16px;
+            border: 1px solid #b8c4d3;
+            border-bottom: none;
+            margin-right: 3px;
+            font-weight: 600;
+        }
+        QTabBar::tab:selected {
+            background: #ffffff;
+            color: #0f172a;
+        }
+        QLabel#Title {
+            font-size: 23px;
+            font-weight: 750;
+            color: #0f172a;
+        }
+        QLabel#SectionTitle {
+            color: #0f172a;
+            font-size: 14px;
+            font-weight: 750;
+            padding-top: 8px;
+        }
+        QLabel#Hint {
+            color: #475569;
+            font-size: 9.5pt;
+        }
+        QLabel#StatusPill {
+            background: #d9f0e8;
+            color: #064e3b;
+            border: 1px solid #9ccfbd;
+            padding: 7px 10px;
+            font-weight: 700;
+        }
+        QLabel#StatusBox, QLabel#InfoBox {
+            background: #ffffff;
+            border: 1px solid #b8c4d3;
+            padding: 9px 10px;
+            color: #111827;
+        }
+        QPushButton {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #8da0b7;
+            padding: 8px 13px;
+            font-weight: 600;
+        }
+        QPushButton:hover {
+            background: #f4f7fb;
+            border-color: #52657d;
+        }
+        QPushButton:disabled {
+            background: #d7dde6;
+            color: #687386;
+            border-color: #b8c4d3;
+        }
+        QPushButton#PrimaryButton {
+            background: #1769aa;
+            color: #ffffff;
+            border: 1px solid #0f4f82;
+        }
+        QPushButton#PrimaryButton:hover {
+            background: #12578e;
+        }
+        QComboBox {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #8da0b7;
+            padding: 7px 9px;
+            min-height: 22px;
+        }
+        QComboBox QAbstractItemView {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #8da0b7;
+            selection-background-color: #dbeafe;
+            selection-color: #0f172a;
+        }
+        QLineEdit, QTextEdit, QPlainTextEdit, QTableWidget, QTableView, QListView {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #b8c4d3;
+            selection-background-color: #b9daf7;
+            selection-color: #0f172a;
+        }
+        QHeaderView::section {
+            background: #d7e1ee;
+            color: #111827;
+            padding: 7px;
+            border: 1px solid #b8c4d3;
+            font-weight: 700;
+        }
+        QProgressBar {
+            border: 1px solid #8da0b7;
+            background: #ffffff;
+            min-height: 14px;
+        }
+        QProgressBar::chunk {
+            background: #1769aa;
+        }
+        QCheckBox {
+            color: #111827;
+            background: transparent;
+            spacing: 7px;
+        }
+        QMenu {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #8da0b7;
+        }
+        QMenu::item:selected {
+            background: #dbeafe;
+            color: #0f172a;
+        }
+        QToolTip {
+            background: #ffffff;
+            color: #111827;
+            border: 1px solid #8da0b7;
+            padding: 5px;
+        }
+        QScrollBar:vertical, QScrollBar:horizontal {
+            background: #edf2f7;
+            border: 1px solid #cbd5e1;
+        }
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+            background: #94a3b8;
+            min-height: 24px;
+            min-width: 24px;
+        }
         """
     )
 

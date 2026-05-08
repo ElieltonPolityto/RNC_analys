@@ -17,34 +17,44 @@ def analyze_pdf(
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
-    uploaded = client.files.create(
-        file=(file_name, pdf_bytes, "application/pdf"),
-        purpose="user_data",
-    )
+    uploaded = None
 
-    response = client.responses.create(
-        model=model,
-        input=[
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": SYSTEM_INSTRUCTIONS}],
+    try:
+        uploaded = client.files.create(
+            file=(file_name, pdf_bytes, "application/pdf"),
+            purpose="user_data",
+        )
+
+        response = client.responses.create(
+            model=model,
+            input=[
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": SYSTEM_INSTRUCTIONS}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_file", "file_id": uploaded.id},
+                        {"type": "input_text", "text": prompt},
+                    ],
+                },
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "rnc_review",
+                    "schema": RNC_REVIEW_SCHEMA,
+                    "strict": True,
+                }
             },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_file", "file_id": uploaded.id},
-                    {"type": "input_text", "text": prompt},
-                ],
-            },
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "rnc_review",
-                "schema": RNC_REVIEW_SCHEMA,
-                "strict": True,
-            }
-        },
-    )
-    return normalize_provider_payload(parse_json_payload(response.output_text))
+        )
+        return normalize_provider_payload(parse_json_payload(response.output_text))
+    finally:
+        if uploaded is not None:
+            try:
+                client.files.delete(uploaded.id)
+            except Exception:
+                # Best-effort cleanup should not hide the provider response or original failure.
+                pass
 
