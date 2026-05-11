@@ -4,27 +4,29 @@ Ferramenta local para revisar projetos eletricos antes da liberacao para produca
 
 O objetivo e ser simples: escolher um PDF, analisar o projeto e abrir um relatorio pronto para uso.
 
-## Opcao Recomendada: New UI
+Este e o README principal do projeto. Use este arquivo como referencia unica de uso, configuracao e solucao de problemas.
 
-A interface recomendada nesta branch e a nova UI desktop em PySide6.
+## Qual .bat Usar
 
-No Windows, use uma destas opcoes:
-
-```text
-ABRIR_RNC_ANALYST_NEW_UI.bat
-```
-
-ou entre na pasta:
+Para uso normal no Windows, use somente este arquivo na pasta raiz:
 
 ```text
-RNC_analyst\iniciar_RNC_analyst.bat
+ABRIR_RNC_ANALYST.bat
 ```
 
-Esse launcher abre a interface nova. Ele tambem verifica as dependencias locais. Se tudo ja estiver instalado e atualizado, ele nao reinstala tudo de novo.
+Ele abre a interface principal desktop em PySide6 e tambem verifica as dependencias locais. Se tudo ja estiver instalado e atualizado, ele nao reinstala tudo de novo.
+
+O arquivo abaixo existe apenas como fallback da interface antiga:
+
+```text
+RNC_analyst\FALLBACK_STREAMLIT_ANTIGO.bat
+```
+
+Use esse fallback somente se a interface principal nao abrir ou se voce precisar comparar o comportamento antigo.
 
 ## Fluxo Basico
 
-1. Abra `ABRIR_RNC_ANALYST_NEW_UI.bat`.
+1. Abra `ABRIR_RNC_ANALYST.bat`.
 2. Clique em `Selecionar PDF`.
 3. Escolha o projeto eletrico em PDF.
 4. Clique em `Analisar projeto`.
@@ -118,7 +120,7 @@ Neste momento, a analise principal nao usa a base historica de RNC como referenc
 A interface Streamlit antiga continua disponivel como fallback:
 
 ```text
-RNC_analyst\iniciar_RNC_analyst_streamlit.bat
+RNC_analyst\FALLBACK_STREAMLIT_ANTIGO.bat
 ```
 
 Use apenas se precisar comparar comportamento ou se a interface desktop nao abrir.
@@ -128,10 +130,9 @@ Use apenas se precisar comparar comportamento ou se a interface desktop nao abri
 ```text
 RNC Analyst\
   README.md
-  ABRIR_RNC_ANALYST_NEW_UI.bat
+  ABRIR_RNC_ANALYST.bat
   RNC_analyst\
-    iniciar_RNC_analyst.bat
-    iniciar_RNC_analyst_streamlit.bat
+    FALLBACK_STREAMLIT_ANTIGO.bat
     desktop_app.py
     app.py
     requirements.txt
@@ -168,13 +169,14 @@ Nao coloque projetos reais de cliente no GitHub.
 Se a janela nao abrir:
 
 1. Feche qualquer RNC Analyst aberto.
-2. Execute novamente `ABRIR_RNC_ANALYST_NEW_UI.bat`.
+2. Execute novamente `ABRIR_RNC_ANALYST.bat`.
 3. Se aparecer erro de dependencia, rode o `.bat` de novo com internet disponivel.
 
 Se a tela antiga aparecer:
 
-1. Confira se voce abriu `ABRIR_RNC_ANALYST_NEW_UI.bat`.
-2. O arquivo Streamlit e apenas fallback.
+1. Feche a janela antiga.
+2. Abra `ABRIR_RNC_ANALYST.bat`.
+3. O arquivo `FALLBACK_STREAMLIT_ANTIGO.bat` e apenas fallback.
 
 Se a IA estiver cara:
 

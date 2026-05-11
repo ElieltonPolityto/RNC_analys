@@ -22,7 +22,7 @@ RNC_analyst/knowledge_base/**
 !RNC_analyst/knowledge_base/
 !RNC_analyst/knowledge_base/_README.md
 !RNC_analyst/knowledge_base/ID_TEMPLATE/
-!RNC_analyst/knowledge_base/ID_TEMPLATE/README.md
+!RNC_analyst/knowledge_base/ID_TEMPLATE/INSTRUCOES_TEMPLATE.txt
 !RNC_analyst/knowledge_base/ID_TEMPLATE/metadata.json
 !RNC_analyst/knowledge_base/ID_TEMPLATE/observacoes.txt
 

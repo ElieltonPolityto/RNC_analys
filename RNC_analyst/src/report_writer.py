@@ -129,7 +129,10 @@ def compact_summary(value: Any, max_chars: int = 900) -> str:
     return limit_text(text, max_chars)
 
 
-def select_pdf_findings(findings: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+PDF_FINDINGS_LIMIT = 20
+
+
+def select_pdf_findings(findings: list[dict[str, Any]], limit: int = PDF_FINDINGS_LIMIT) -> list[dict[str, Any]]:
     severity_order = {"alta": 0, "media": 1, "baixa": 2}
     sorted_findings = sorted(
         findings or [],

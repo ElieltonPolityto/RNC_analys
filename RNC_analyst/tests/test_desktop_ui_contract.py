@@ -10,7 +10,7 @@ from pypdf import PdfReader
 
 from src import desktop_service
 from src.prompts import build_review_prompt
-from src.report_writer import write_pdf
+from src.report_writer import PDF_FINDINGS_LIMIT, select_pdf_findings, write_pdf
 
 
 class DesktopUiContractTests(unittest.TestCase):
@@ -101,6 +101,17 @@ class DesktopUiContractTests(unittest.TestCase):
         self.assertNotIn("Revisao\n", text)
         self.assertNotIn("Usuario\n", text)
         self.assertNotIn("Gerado em\n", text)
+
+    def test_pdf_allows_up_to_twenty_findings_when_needed(self) -> None:
+        findings = [
+            {"severity": "baixa", "category": f"Item {index}", "page": index}
+            for index in range(1, PDF_FINDINGS_LIMIT + 6)
+        ]
+
+        selected = select_pdf_findings(findings)
+
+        self.assertEqual(len(selected), PDF_FINDINGS_LIMIT)
+        self.assertEqual(selected[-1]["page"], PDF_FINDINGS_LIMIT)
 
     def test_prompt_uses_personas_and_ignores_historical_base(self) -> None:
         prompt = build_review_prompt(
