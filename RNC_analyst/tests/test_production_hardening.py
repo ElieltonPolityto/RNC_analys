@@ -6,7 +6,8 @@ from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 
-from src.analysis import coerce_confidence, max_severity, normalize_finding
+from src.ai_providers.openai_provider import is_transient_provider_error
+from src.analysis import coerce_confidence, humanize_provider_error, max_severity, normalize_finding
 from src.pdf_tools import parse_pdf_bytes, save_uploaded_pdf
 from src.report_writer import write_markdown
 
@@ -80,6 +81,18 @@ class ProductionHardeningTests(unittest.TestCase):
         self.assertEqual(finding["confidence"], 1.0)
         self.assertEqual(coerce_confidence("nao numerico", default=0.4), 0.4)
         self.assertEqual(max_severity([{"severity": "baixo"}, {"severity": "Alta"}]), "alta")
+
+    def test_openai_520_error_is_retried_and_made_readable(self) -> None:
+        html_error = Exception(
+            "<html><title>api.openai.com | 520: Web server is returning an unknown error</title></html>"
+        )
+
+        message = humanize_provider_error(html_error, "OpenAI", "gpt-5")
+
+        self.assertTrue(is_transient_provider_error(html_error))
+        self.assertIn("erro temporario 520", message)
+        self.assertIn("pre-analise local", message)
+        self.assertNotIn("<html>", message)
 
 
 if __name__ == "__main__":

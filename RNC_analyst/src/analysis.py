@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any
 
 from .ai_providers import openai_provider
@@ -92,7 +93,7 @@ def analyze_project(
             summary="A chamada de IA falhou. A pre-analise local foi mantida para nao interromper o fluxo.",
             overall_risk=estimate_overall_risk(local_findings),
             findings=local_findings,
-            provider_error=str(exc),
+            provider_error=humanize_provider_error(exc, provider, model),
             related_cases=similar_cases,
         )
 
@@ -151,6 +152,69 @@ def build_local_findings(
         )
 
     return findings
+
+
+def humanize_provider_error(exc: Exception, provider: str, model: str) -> str:
+    raw = str(exc or "").strip()
+    raw_lower = raw.lower()
+    status_code = getattr(exc, "status_code", None) or extract_status_code(raw)
+
+    if provider == "OpenAI":
+        if status_code in {500, 502, 503, 504, 520, 522, 524} or "cloudflare" in raw_lower:
+            code_text = f" {status_code}" if status_code else ""
+            return (
+                f"OpenAI API retornou erro temporario{code_text}. "
+                "Tente executar a analise novamente em alguns minutos. "
+                "A pre-analise local foi mantida."
+            )
+        if status_code == 429 or "rate limit" in raw_lower:
+            return (
+                "OpenAI API retornou limite de uso ou muitas chamadas em sequencia. "
+                "Aguarde um pouco e tente novamente. A pre-analise local foi mantida."
+            )
+        if status_code in {401, 403} or "invalid api key" in raw_lower:
+            return (
+                "OpenAI API recusou a chave configurada. Confira OPENAI_API_KEY no arquivo .env. "
+                "A pre-analise local foi mantida."
+            )
+        if status_code in {400, 404} and ("model" in raw_lower or "modelo" in raw_lower):
+            return (
+                f"OpenAI API nao aceitou o modelo configurado ({model}). "
+                "Troque o modelo em Configuracoes ou no arquivo .env. "
+                "A pre-analise local foi mantida."
+            )
+
+    if "<html" in raw_lower or len(raw) > 800:
+        return (
+            f"{provider} retornou uma resposta inesperada da API. "
+            "Tente novamente; se persistir, confira chave, modelo e conexao. "
+            "A pre-analise local foi mantida."
+        )
+
+    return limit_error_text(raw)
+
+
+def extract_status_code(text: str) -> int | None:
+    patterns = [
+        r"error code[:\s]+(\d{3})",
+        r"status code[:\s]+(\d{3})",
+        r"\b(\d{3})\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text or "", flags=re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
+    return None
+
+
+def limit_error_text(text: str, max_chars: int = 700) -> str:
+    clean = re.sub(r"\s+", " ", text or "").strip()
+    if len(clean) <= max_chars:
+        return clean
+    return clean[: max_chars - 3].rstrip() + "..."
 
 
 def make_finding(

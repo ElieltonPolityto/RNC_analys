@@ -171,6 +171,7 @@ Se a janela nao abrir:
 1. Feche qualquer RNC Analyst aberto.
 2. Execute novamente `ABRIR_RNC_ANALYST.bat`.
 3. Se aparecer erro de dependencia, rode o `.bat` de novo com internet disponivel.
+4. Se a janela fechar ou continuar falhando, envie o arquivo `rnc_analyst_launcher.log` que fica na pasta raiz.
 
 Se a tela antiga aparecer:
 

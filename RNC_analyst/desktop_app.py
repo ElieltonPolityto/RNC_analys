@@ -345,20 +345,23 @@ class RncAnalystWindow(QMainWindow):
     def on_analysis_done(self, result: service.AnalysisResult) -> None:
         self.analysis_result = result
         self.stop_ai_progress()
-        self.set_progress(100, "Analise concluida")
+        status = result.result.get("status", "")
+        provider_error = result.result.get("provider_error", "")
+        if status == "erro_provedor":
+            self.set_progress(100, "Pre-analise local concluida; IA externa indisponivel")
+        else:
+            self.set_progress(100, "Analise concluida")
         self.analyze_button.setEnabled(True)
         self.set_report_buttons(True)
-        self.result_text.setPlainText(
-            "\n".join(
-                [
-                    f"Analise registrada com ID {result.analysis_id}.",
-                    f"Status: {result.result.get('status', '')}",
-                    f"Resumo: {result.result.get('summary', '')}",
-                    "",
-                    "Relatorio PDF gerado e aberto automaticamente.",
-                ]
-            )
-        )
+        lines = [
+            f"Analise registrada com ID {result.analysis_id}.",
+            f"Status: {status}",
+            f"Resumo: {result.result.get('summary', '')}",
+        ]
+        if provider_error:
+            lines.extend(["", f"Aviso da API: {provider_error}"])
+        lines.extend(["", "Relatorio PDF gerado e aberto automaticamente."])
+        self.result_text.setPlainText("\n".join(lines))
         self.refresh_history()
         self.open_report("pdf")
 
