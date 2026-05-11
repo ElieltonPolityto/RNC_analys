@@ -6,15 +6,17 @@ O objetivo e ser simples: escolher um PDF, analisar o projeto e abrir um relator
 
 Este e o README principal do projeto. Use este arquivo como referencia unica de uso, configuracao e solucao de problemas.
 
-## Qual .bat Usar
+## Arquivos De Execucao
 
-Para uso normal no Windows, use somente este arquivo na pasta raiz:
+Para uso normal no Windows, use este arquivo na pasta raiz:
 
 ```text
 ABRIR_RNC_ANALYST.bat
 ```
 
-Ele abre a interface principal desktop em PySide6 e tambem verifica as dependencias locais. Se tudo ja estiver instalado e atualizado, ele nao reinstala tudo de novo.
+Ele abre a interface desktop em PySide6 e tambem verifica as dependencias locais. Se tudo ja estiver instalado e atualizado, ele nao reinstala tudo de novo.
+
+Para abrir pelo `.bat`, o computador precisa ter Python 3.11 ou superior instalado. Se o Python nao estiver instalado, estiver fora do PATH ou for antigo demais, o programa pode nao abrir corretamente. Nesses casos, use a versao em executavel descrita abaixo ou instale o Python 3.11+ marcando a opcao `Add python.exe to PATH`.
 
 Para gerar uma versao distribuivel em executavel, use:
 
@@ -29,15 +31,19 @@ dist\RNC_Analyst\RNC_Analyst.exe
 dist\RNC_Analyst_executavel.zip
 ```
 
-Para levar para outro PC, use o `.zip` ou copie a pasta `dist\RNC_Analyst` inteira. Nao copie apenas o `.exe`, porque ele depende das pastas internas geradas junto. No outro PC, depois de extrair, abra `RNC_Analyst.exe`. Nessa versao empacotada, o outro PC nao precisa ter Python instalado.
-
-O arquivo abaixo existe apenas como fallback da interface antiga:
+O `RNC_Analyst.exe` nao fica na pasta raiz do projeto. Depois de gerar o executavel, abra esta pasta:
 
 ```text
-RNC_analyst\FALLBACK_STREAMLIT_ANTIGO.bat
+dist\RNC_Analyst\
 ```
 
-Use esse fallback somente se a interface principal nao abrir ou se voce precisar comparar o comportamento antigo.
+Dentro dela estara:
+
+```text
+RNC_Analyst.exe
+```
+
+Para levar para outro PC, use o `.zip` ou copie a pasta `dist\RNC_Analyst` inteira. Nao copie apenas o `.exe`, porque ele depende das pastas internas geradas junto. No outro PC, depois de extrair, abra `RNC_Analyst.exe`. Nessa versao empacotada, o outro PC nao precisa ter Python instalado.
 
 ## Fluxo Basico
 
@@ -90,7 +96,7 @@ OPENAI_MODEL=gpt-5-mini
 
 Se `OPENAI_API_KEY` nao estiver configurada, o programa roda uma pre-analise local sem chamar a OpenAI.
 
-Para trocar o modelo, abra a aba `Configuracoes` na interface nova e salve outro modelo OpenAI. Use modelos maiores somente quando precisar de uma revisao mais profunda.
+Para trocar o modelo, abra a aba `Configuracoes` e salve outro modelo OpenAI. Use modelos maiores somente quando precisar de uma revisao mais profunda.
 
 ## Como Garantir O Prompt Usado
 
@@ -130,16 +136,6 @@ A aba `Base RNC` continua existindo para manutencao futura.
 
 Neste momento, a analise principal nao usa a base historica de RNC como referencia. O foco atual e o PDF do projeto e o prompt tecnico.
 
-## Interface Antiga
-
-A interface Streamlit antiga continua disponivel como fallback:
-
-```text
-RNC_analyst\FALLBACK_STREAMLIT_ANTIGO.bat
-```
-
-Use apenas se precisar comparar comportamento ou se a interface desktop nao abrir.
-
 ## Estrutura Das Pastas
 
 ```text
@@ -152,9 +148,7 @@ RNC Analyst\
       RNC_Analyst.exe
     RNC_Analyst_executavel.zip
   RNC_analyst\
-    FALLBACK_STREAMLIT_ANTIGO.bat
     desktop_app.py
-    app.py
     requirements.txt
     .env.example
     prompts\
@@ -191,14 +185,16 @@ Se a janela nao abrir:
 
 1. Feche qualquer RNC Analyst aberto.
 2. Execute novamente `ABRIR_RNC_ANALYST.bat`.
-3. Se aparecer erro de dependencia, rode o `.bat` de novo com internet disponivel.
-4. Se a janela fechar ou continuar falhando, envie o arquivo `rnc_analyst_launcher.log` que fica na pasta raiz.
+3. Confira se o computador tem Python 3.11 ou superior instalado.
+4. Se aparecer erro de dependencia, rode o `.bat` de novo com internet disponivel.
+5. Se a janela fechar ou continuar falhando, envie o arquivo `rnc_analyst_launcher.log` que fica na pasta raiz.
 
-Se a tela antiga aparecer:
+Se for usar em um computador sem Python:
 
-1. Feche a janela antiga.
-2. Abra `ABRIR_RNC_ANALYST.bat`.
-3. O arquivo `FALLBACK_STREAMLIT_ANTIGO.bat` e apenas fallback.
+1. Use `dist\RNC_Analyst_executavel.zip`.
+2. Extraia o ZIP no computador de destino.
+3. Abra `RNC_Analyst.exe` dentro da pasta extraida.
+4. Nao copie apenas o `.exe`; leve a pasta completa.
 
 Se a IA estiver cara:
 

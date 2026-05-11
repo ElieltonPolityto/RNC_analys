@@ -122,13 +122,19 @@ if "%INSTALLED_REQ_HASH%"=="" set "NEED_INSTALL=1"
 if not "%INSTALLED_REQ_HASH%"=="%REQ_HASH%" set "NEED_INSTALL=1"
 
 if "%NEED_INSTALL%"=="1" (
+    if exist "%PKG_DIR%" (
+        echo Dependencias mudaram. Limpando pacotes locais antigos...
+        call :log "Limpando pacotes locais antigos em %PKG_DIR%."
+        rmdir /s /q "%PKG_DIR%" >>"%LOG_FILE%" 2>&1
+        mkdir "%PKG_DIR%" >>"%LOG_FILE%" 2>&1
+    )
     echo Instalando/atualizando dependencias. Isso pode demorar alguns minutos...
     call :log "Instalando dependencias em %PKG_DIR%."
     %PY% -m pip install --upgrade --target "%PKG_DIR%" -r requirements.txt >>"%LOG_FILE%" 2>&1
     if errorlevel 1 (
         echo Falha ao instalar dependencias.
         echo.
-        echo Verifique se este PC tem internet liberada e se o antiv??rus/proxy nao bloqueou o pip.
+        echo Verifique se este PC tem internet liberada e se o antivirus/proxy nao bloqueou o pip.
         echo Detalhes no log:
         echo %LOG_FILE%
         echo.

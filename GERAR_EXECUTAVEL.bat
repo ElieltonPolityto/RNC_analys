@@ -72,6 +72,11 @@ if "%INSTALLED_REQ_HASH%"=="" set "NEED_RUNTIME_INSTALL=1"
 if not "%INSTALLED_REQ_HASH%"=="%REQ_HASH%" set "NEED_RUNTIME_INSTALL=1"
 
 if "%NEED_RUNTIME_INSTALL%"=="1" (
+    if exist "%PKG_DIR%" (
+        echo Dependencias mudaram. Limpando pacotes locais antigos...
+        rmdir /s /q "%PKG_DIR%" >>"%LOG_FILE%" 2>&1
+        mkdir "%PKG_DIR%" >>"%LOG_FILE%" 2>&1
+    )
     echo Instalando/atualizando dependencias do aplicativo...
     %PY% -m pip install --upgrade --target "%PKG_DIR%" -r requirements.txt >>"%LOG_FILE%" 2>&1
     if errorlevel 1 call :fail "Falha ao instalar dependencias do aplicativo."
