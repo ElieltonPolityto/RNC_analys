@@ -16,6 +16,21 @@ ABRIR_RNC_ANALYST.bat
 
 Ele abre a interface principal desktop em PySide6 e tambem verifica as dependencias locais. Se tudo ja estiver instalado e atualizado, ele nao reinstala tudo de novo.
 
+Para gerar uma versao distribuivel em executavel, use:
+
+```text
+GERAR_EXECUTAVEL.bat
+```
+
+Esse arquivo nao e para abrir o programa no dia a dia. Ele serve para criar:
+
+```text
+dist\RNC_Analyst\RNC_Analyst.exe
+dist\RNC_Analyst_executavel.zip
+```
+
+Para levar para outro PC, use o `.zip` ou copie a pasta `dist\RNC_Analyst` inteira. Nao copie apenas o `.exe`, porque ele depende das pastas internas geradas junto. No outro PC, depois de extrair, abra `RNC_Analyst.exe`. Nessa versao empacotada, o outro PC nao precisa ter Python instalado.
+
 O arquivo abaixo existe apenas como fallback da interface antiga:
 
 ```text
@@ -131,6 +146,11 @@ Use apenas se precisar comparar comportamento ou se a interface desktop nao abri
 RNC Analyst\
   README.md
   ABRIR_RNC_ANALYST.bat
+  GERAR_EXECUTAVEL.bat
+  dist\
+    RNC_Analyst\
+      RNC_Analyst.exe
+    RNC_Analyst_executavel.zip
   RNC_analyst\
     FALLBACK_STREAMLIT_ANTIGO.bat
     desktop_app.py
@@ -161,6 +181,7 @@ Por seguranca, estes itens ficam fora do Git:
 - arquivos em `reports/`
 - banco local em `data/`
 - dependencias instaladas localmente
+- arquivos gerados em `build/` e `dist/`
 
 Nao coloque projetos reais de cliente no GitHub.
 

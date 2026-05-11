@@ -6,6 +6,9 @@ venv/
 .claude/
 RNC_analyst/.packages/
 RNC_analyst/.packages_runtime/
+RNC_analyst/.packages_build/
+build/
+dist/
 *.log
 
 # Local secrets

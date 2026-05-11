@@ -32,7 +32,7 @@ from PySide6.QtCore import QUrl
 from src import desktop_service as service
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 
 
 DIALOG_STYLESHEET = """
