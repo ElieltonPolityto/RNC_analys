@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from openpyxl import Workbook
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - the launcher installs python-dotenv for normal use.
@@ -28,6 +30,7 @@ from .case_base import (
     save_base_instructions,
 )
 from .database import init_db, list_analyses, save_analysis
+from .llm_context import AnalysisOptions, ContextBundle, build_context_bundle, load_equipment_options
 from .pdf_tools import build_text_brief, ensure_runtime_dirs, parse_pdf_bytes, save_uploaded_pdf
 from .prompts import SYSTEM_INSTRUCTIONS, build_review_prompt
 from .report_writer import write_reports
@@ -63,6 +66,7 @@ class AnalysisResult:
     report_paths: dict[str, Path]
     project_info: dict[str, str]
     pdf_summary: dict[str, Any]
+    context_files: list[str]
 
 
 def create_context(base_dir: Path) -> DesktopContext:
@@ -128,13 +132,29 @@ def load_pdf(path: Path) -> PdfLoadResult:
     return PdfLoadResult(path=path, bytes_data=file_bytes, summary=summary)
 
 
-def build_effective_prompt(context: DesktopContext, loaded_pdf: PdfLoadResult) -> str:
-    base_instructions = load_base_instructions(context.case_base_paths["instructions"])
-    project_info = build_project_info(loaded_pdf.summary.get("inferred", {}))
+def equipment_options(context: DesktopContext) -> list[Any]:
+    return load_equipment_options(context.base_dir)
+
+
+def build_llm_context(context: DesktopContext, loaded_pdf: PdfLoadResult, options: AnalysisOptions) -> ContextBundle:
+    return build_context_bundle(
+        base_dir=context.base_dir,
+        options=options,
+        pdf_summary=loaded_pdf.summary,
+        legacy_prompt_path=context.case_base_paths["instructions"],
+    )
+
+
+def build_effective_prompt(context: DesktopContext, loaded_pdf: PdfLoadResult, options: AnalysisOptions) -> str:
+    context_bundle = build_llm_context(context, loaded_pdf, options)
+    project_info = build_project_info(
+        loaded_pdf.summary.get("inferred", {}),
+        equipment_model=context_bundle.equipment.name,
+    )
     user_prompt = build_review_prompt(
         project_info,
         build_text_brief(loaded_pdf.summary),
-        base_instructions=base_instructions,
+        base_instructions=context_bundle.instructions,
     )
     return "\n\n".join(
         [
@@ -149,6 +169,7 @@ def build_effective_prompt(context: DesktopContext, loaded_pdf: PdfLoadResult) -
 def run_analysis(
     context: DesktopContext,
     loaded_pdf: PdfLoadResult,
+    options: AnalysisOptions,
     progress: ProgressCallback | None = None,
 ) -> AnalysisResult:
     emit_progress(progress, 0, "Preparando analise")
@@ -156,7 +177,6 @@ def run_analysis(
     provider = "OpenAI" if api_key else "Modelo local"
     model = openai_model() if api_key else "local"
     inferred = loaded_pdf.summary.get("inferred", {})
-    project_info = build_project_info(inferred)
 
     emit_progress(progress, 10, "Salvando PDF local")
     upload_path = save_uploaded_pdf(
@@ -165,7 +185,8 @@ def run_analysis(
         context.runtime_dirs["uploads"],
     )
     emit_progress(progress, 20, "Carregando instrucoes")
-    base_instructions = load_base_instructions(context.case_base_paths["instructions"])
+    context_bundle = build_llm_context(context, loaded_pdf, options)
+    project_info = build_project_info(inferred, equipment_model=context_bundle.equipment.name)
     emit_progress(progress, 35, "Preparando contexto")
     similar_cases: list[dict[str, Any]] = []
     emit_progress(progress, 50, "Executando analise com IA/local")
@@ -177,9 +198,12 @@ def run_analysis(
         file_name=loaded_pdf.path.name,
         pdf_summary=loaded_pdf.summary,
         project_info=project_info,
-        base_instructions=base_instructions,
+        base_instructions=context_bundle.instructions,
         similar_cases=similar_cases,
     )
+    result["equipment_model"] = context_bundle.equipment.name
+    result["used_tools"] = context_bundle.used_tools
+    result["context_files"] = context_bundle.context_files
     emit_progress(progress, 80, "Gerando relatorios")
     report_paths = write_reports(
         reports_dir=context.runtime_dirs["reports"],
@@ -197,8 +221,9 @@ def run_analysis(
         upload_path=upload_path,
         report_paths=report_paths,
         related_cases=similar_cases,
-        base_prompt=base_instructions,
-        base_prompt_path=context.case_base_paths["instructions"],
+        base_prompt=context_bundle.instructions,
+        base_prompt_path=editable_general_prompt_path(context),
+        context_bundle=context_bundle,
     )
     analysis_id = save_analysis(context.db_path, record)
     emit_progress(progress, 100, "Analise concluida")
@@ -208,6 +233,7 @@ def run_analysis(
         report_paths=report_paths,
         project_info=project_info,
         pdf_summary=loaded_pdf.summary,
+        context_files=context_bundle.context_files,
     )
 
 
@@ -216,8 +242,8 @@ def emit_progress(progress: ProgressCallback | None, percent: int, message: str)
         progress(max(0, min(100, percent)), message)
 
 
-def build_project_info(inferred: dict[str, Any]) -> dict[str, str]:
-    return {
+def build_project_info(inferred: dict[str, Any], *, equipment_model: str = "") -> dict[str, str]:
+    info = {
         "usuario": os.getenv("USERNAME", "").strip() or os.getenv("USER", "").strip() or "Usuario local",
         "cliente": str(inferred.get("cliente") or "").strip(),
         "documento": str(inferred.get("documento") or "").strip(),
@@ -225,6 +251,9 @@ def build_project_info(inferred: dict[str, Any]) -> dict[str, str]:
         "projeto": str(inferred.get("projeto") or "").strip(),
         "revisao": str(inferred.get("revisao") or "").strip(),
     }
+    if equipment_model:
+        info["modelo_equipamento"] = equipment_model
+    return info
 
 
 def index_case_base(context: DesktopContext) -> dict[str, Any]:
@@ -270,13 +299,61 @@ def history_rows(context: DesktopContext) -> list[dict[str, Any]]:
     return list_analyses(context.db_path)
 
 
+def export_history_excel(context: DesktopContext, path: Path) -> dict[str, Any]:
+    rows = history_rows(context)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Historico"
+    headers = [
+        "ID",
+        "Data",
+        "Arquivo",
+        "Cliente",
+        "Documento",
+        "Equipamento",
+        "Consultou manuais",
+        "Status",
+        "PDF",
+        "Excel",
+    ]
+    worksheet.append(headers)
+    for row in rows:
+        worksheet.append(
+            [
+                str(row.get("id") or ""),
+                str(row.get("created_at") or ""),
+                str(row.get("pdf_name") or ""),
+                str(row.get("customer") or ""),
+                str(row.get("document") or ""),
+                str(row.get("equipment_model") or ""),
+                "sim" if int(row.get("used_tools") or 0) else "nao",
+                str(row.get("status") or ""),
+                str(row.get("report_pdf_path") or ""),
+                str(row.get("report_xlsx_path") or ""),
+            ]
+        )
+    for column_cells in worksheet.columns:
+        max_len = max(len(str(cell.value or "")) for cell in column_cells)
+        worksheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_len + 2, 12), 80)
+    workbook.save(path)
+    return {"path": path, "rows": len(rows)}
+
+
 def load_prompt(context: DesktopContext) -> str:
-    return load_base_instructions(context.case_base_paths["instructions"])
+    return load_base_instructions(editable_general_prompt_path(context))
 
 
 def save_prompt(context: DesktopContext, content: str) -> str:
-    save_base_instructions(context.case_base_paths["instructions"], content)
+    save_base_instructions(editable_general_prompt_path(context), content)
     return prompt_hash(content)
+
+
+def editable_general_prompt_path(context: DesktopContext) -> Path:
+    general_path = context.base_dir / "llm_context" / "Geral.md"
+    if general_path.exists():
+        return general_path
+    return context.case_base_paths["instructions"]
 
 
 def build_record(
@@ -290,6 +367,7 @@ def build_record(
     related_cases: list[dict[str, Any]],
     base_prompt: str,
     base_prompt_path: Path,
+    context_bundle: ContextBundle,
 ) -> dict[str, Any]:
     return {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -298,6 +376,9 @@ def build_record(
         "document": project_info.get("documento", ""),
         "project": project_info.get("projeto", ""),
         "revision": project_info.get("revisao", ""),
+        "equipment_model": context_bundle.equipment.name,
+        "used_tools": 1 if context_bundle.used_tools else 0,
+        "context_files_json": json.dumps(context_bundle.context_files, ensure_ascii=False),
         "provider": result.get("provider", ""),
         "model": result.get("model", ""),
         "status": result.get("status", ""),

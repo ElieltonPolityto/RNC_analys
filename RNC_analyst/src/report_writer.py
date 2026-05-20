@@ -66,6 +66,9 @@ def write_pdf(
         ["Arquivo", pdf_summary.get("file_name", "")],
         ["Cliente", first_report_value(project_info.get("cliente"), inferred.get("cliente"))],
         ["Documento", first_report_value(project_info.get("documento"), inferred.get("documento"))],
+        ["Modelo do equipamento", first_report_value(project_info.get("modelo_equipamento"), result.get("equipment_model"))],
+        ["Consultou manuais", yes_no(result.get("used_tools"))],
+        ["Arquivos de contexto", ", ".join(result.get("context_files") or []) or "nao informado"],
     ]
     story.append(Paragraph("Projeto analisado", styles["Heading"]))
     story.append(make_pdf_table(summary_data, styles, column_widths=[4.2 * cm, 12.0 * cm]))
@@ -109,6 +112,10 @@ def first_report_value(*values: Any) -> str:
         if text:
             return text
     return "nao identificado"
+
+
+def yes_no(value: Any) -> str:
+    return "sim" if bool(value) else "nao"
 
 
 def format_report_datetime(value: Any) -> str:
@@ -185,6 +192,9 @@ def write_excel(
         {"campo": "pedido", "valor": project_info.get("pedido", "")},
         {"campo": "projeto", "valor": project_info.get("projeto", "")},
         {"campo": "revisao", "valor": project_info.get("revisao", "")},
+        {"campo": "modelo_equipamento", "valor": first_report_value(project_info.get("modelo_equipamento"), result.get("equipment_model"))},
+        {"campo": "consultou_manuais", "valor": yes_no(result.get("used_tools"))},
+        {"campo": "arquivos_contexto", "valor": "\n".join(result.get("context_files") or [])},
         {"campo": "provedor", "valor": result.get("provider", "")},
         {"campo": "modelo", "valor": result.get("model", "")},
         {"campo": "status", "valor": result.get("status", "")},
@@ -241,6 +251,9 @@ def write_markdown(
         f"- Pedido: {project_info.get('pedido', '')}",
         f"- Projeto: {project_info.get('projeto', '')}",
         f"- Revisao: {project_info.get('revisao', '')}",
+        f"- Modelo do equipamento: {first_report_value(project_info.get('modelo_equipamento'), result.get('equipment_model'))}",
+        f"- Consultou manuais: {yes_no(result.get('used_tools'))}",
+        f"- Arquivos de contexto: {', '.join(result.get('context_files') or [])}",
         f"- Provedor: {result.get('provider', '')}",
         f"- Modelo: {result.get('model', '')}",
         f"- Status: {result.get('status', '')}",
