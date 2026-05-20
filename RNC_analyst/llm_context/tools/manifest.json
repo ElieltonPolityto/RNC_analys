@@ -1,0 +1,25 @@
+{
+  "tools": [
+    {
+      "id": "disjuntores",
+      "nome": "Catalogo de disjuntores",
+      "arquivo": "disjuntores.md",
+      "modelos": ["*"],
+      "palavras_chave": ["disjuntor", "disjuntores", "dj", "protecao", "proteção"]
+    },
+    {
+      "id": "contatores",
+      "nome": "Catalogo de contatores",
+      "arquivo": "contatores.md",
+      "modelos": ["*"],
+      "palavras_chave": ["contator", "contatores", "bobina", "ac-3", "ac3"]
+    },
+    {
+      "id": "controladores",
+      "nome": "Catalogo de controladores",
+      "arquivo": "controladores.md",
+      "modelos": ["*"],
+      "palavras_chave": ["controlador", "controladores", "ihm", "carel", "danfoss", "plc"]
+    }
+  ]
+}

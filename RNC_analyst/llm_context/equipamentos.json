@@ -1,0 +1,64 @@
+{
+  "equipamentos": [
+    {
+      "id": "cool_pack",
+      "nome": "Cool Pack",
+      "arquivo": "modelos/cool_pack.md"
+    },
+    {
+      "id": "chill_pack",
+      "nome": "Chill Pack",
+      "arquivo": "modelos/chill_pack.md"
+    },
+    {
+      "id": "eco_pack",
+      "nome": "Eco Pack",
+      "arquivo": "modelos/eco_pack.md"
+    },
+    {
+      "id": "eco2pack",
+      "nome": "Eco2Pack",
+      "arquivo": "modelos/eco2pack.md"
+    },
+    {
+      "id": "pro_pack_s",
+      "nome": "Pro Pack S",
+      "arquivo": "modelos/pro_pack_s.md"
+    },
+    {
+      "id": "pro_pack_m",
+      "nome": "Pro Pack M",
+      "arquivo": "modelos/pro_pack_m.md"
+    },
+    {
+      "id": "pro_pack_l",
+      "nome": "Pro Pack L",
+      "arquivo": "modelos/pro_pack_l.md"
+    },
+    {
+      "id": "sky_rack_paralelo",
+      "nome": "Sky Rack / Paralelo",
+      "arquivo": "modelos/sky_rack_paralelo.md"
+    },
+    {
+      "id": "rackhouse",
+      "nome": "Rackhouse",
+      "arquivo": "modelos/rackhouse.md"
+    },
+    {
+      "id": "ql",
+      "nome": "QL",
+      "arquivo": "modelos/ql.md"
+    },
+    {
+      "id": "qd",
+      "nome": "QD",
+      "arquivo": "modelos/qd.md"
+    },
+    {
+      "id": "qfc",
+      "nome": "QFC",
+      "arquivo": "modelos/qfc.md"
+    }
+  ]
+}

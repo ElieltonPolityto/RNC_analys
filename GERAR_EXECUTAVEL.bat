@@ -105,7 +105,6 @@ echo Gerando executavel. Isso pode demorar alguns minutos...
     --name RNC_Analyst ^
     --paths "%PKG_DIR%" ^
     --paths "%APP_DIR%\.packages" ^
-    --collect-all chromadb ^
     --collect-all reportlab ^
     --collect-all openpyxl ^
     --distpath "%ROOT_DIR%dist" ^
@@ -118,6 +117,9 @@ if errorlevel 1 call :fail "PyInstaller falhou ao gerar o executavel."
 if not exist "%ROOT_DIR%dist\RNC_Analyst\prompts" mkdir "%ROOT_DIR%dist\RNC_Analyst\prompts" >>"%LOG_FILE%" 2>&1
 copy /Y "%APP_DIR%\.env.example" "%ROOT_DIR%dist\RNC_Analyst\.env.example" >>"%LOG_FILE%" 2>&1
 copy /Y "%APP_DIR%\prompts\instrucoes_base.txt" "%ROOT_DIR%dist\RNC_Analyst\prompts\instrucoes_base.txt" >>"%LOG_FILE%" 2>&1
+if exist "%ROOT_DIR%dist\RNC_Analyst\llm_context" rmdir /S /Q "%ROOT_DIR%dist\RNC_Analyst\llm_context" >>"%LOG_FILE%" 2>&1
+xcopy "%APP_DIR%\llm_context" "%ROOT_DIR%dist\RNC_Analyst\llm_context\" /E /I /Y >>"%LOG_FILE%" 2>&1
+if errorlevel 1 call :fail "Nao foi possivel copiar a pasta llm_context para o executavel."
 
 set "ZIP_FILE=%ROOT_DIR%dist\RNC_Analyst_executavel.zip"
 echo Gerando ZIP para copiar para outro PC...

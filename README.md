@@ -50,12 +50,16 @@ Para levar para outro PC, use o `.zip` ou copie a pasta `dist\RNC_Analyst` intei
 1. Abra `ABRIR_RNC_ANALYST.bat`.
 2. Clique em `Selecionar PDF`.
 3. Escolha o projeto eletrico em PDF.
-4. Clique em `Analisar projeto`.
-5. Aguarde a barra de progresso chegar a 100%.
-6. O PDF do relatorio abre automaticamente.
-7. Se precisar, use os botoes `Abrir PDF`, `Abrir Excel` ou `Abrir pasta`.
+4. Selecione o `Modelo do equipamento`.
+5. Se o projeto estiver fora do padrao e precisar de catalogos/manuais, marque `Projeto fora do padrao - consultar manuais`.
+6. Clique em `Analisar projeto`.
+7. Aguarde a barra de progresso chegar a 100%.
+8. O PDF do relatorio abre automaticamente.
+9. Se precisar, use os botoes `Abrir PDF`, `Abrir Excel` ou `Abrir pasta`.
 
-Nao e necessario preencher cliente, projeto, pedido, data, revisao ou usuario. O sistema tenta detectar o que for possivel automaticamente.
+Na aba `Historico`, use `Exportar Excel` para salvar uma planilha com os registros de analises ja executadas.
+
+Nao e necessario preencher cliente, projeto, pedido, data, revisao ou usuario. O sistema tenta detectar o que for possivel automaticamente. O modelo do equipamento e obrigatorio porque define qual contexto tecnico sera usado pela IA.
 
 ## O Que A Ferramenta Gera
 
@@ -109,11 +113,97 @@ Ver prompt da proxima analise
 Use assim:
 
 1. Selecione primeiro um PDF na aba `Nova analise`.
-2. Va para `Configuracoes`.
-3. Clique em `Ver prompt da proxima analise`.
-4. Confira o texto que sera enviado para a IA.
+2. Selecione o modelo do equipamento.
+3. Va para `Configuracoes`.
+4. Clique em `Ver prompt da proxima analise`.
+5. Confira o texto que sera enviado para a IA.
 
 Isso mostra o `SYSTEM INSTRUCTIONS` e o `USER PROMPT` efetivos antes da chamada de IA.
+
+## Contexto Por Modelo
+
+A pasta editavel de contexto fica em:
+
+```text
+RNC_analyst\llm_context\
+```
+
+Ela tambem e copiada para:
+
+```text
+dist\RNC_Analyst\llm_context\
+```
+
+Assim, e possivel editar o contexto tanto no projeto fonte quanto na versao distribuida em executavel.
+
+O app monta o prompt de forma controlada:
+
+- Sempre le `Geral.md`.
+- Sempre le `skills.md`.
+- Sempre le `FalsosPositivos.md`.
+- Le apenas o markdown do modelo selecionado em `modelos\`.
+- So le arquivos dentro de `tools\` quando o operador marca `Projeto fora do padrao - consultar manuais`.
+
+Para alterar a lista de modelos, edite:
+
+```text
+RNC_analyst\llm_context\equipamentos.json
+```
+
+Cada modelo precisa ter:
+
+```json
+{
+  "id": "cool_pack",
+  "nome": "Cool Pack",
+  "arquivo": "modelos/cool_pack.md"
+}
+```
+
+Para criar um novo modelo:
+
+1. Crie um arquivo em `RNC_analyst\llm_context\modelos\`.
+2. Adicione uma entrada em `equipamentos.json`.
+3. Use o `id` sem espacos e sem acentos.
+4. Reabra o programa para carregar a nova lista.
+
+Para manter falsos positivos, edite:
+
+```text
+RNC_analyst\llm_context\FalsosPositivos.md
+```
+
+Coloque ali modelos, componentes, observacoes e padroes internos que nao devem virar RNC ou ponto de melhoria. Esse arquivo e sempre consultado.
+
+Para cadastrar catalogos/manuais, coloque o markdown em:
+
+```text
+RNC_analyst\llm_context\tools\
+```
+
+Depois registre o arquivo em:
+
+```text
+RNC_analyst\llm_context\tools\manifest.json
+```
+
+Exemplo:
+
+```json
+{
+  "tools": [
+    {
+      "id": "disjuntores",
+      "nome": "Catalogo de disjuntores",
+      "arquivo": "disjuntores.md",
+      "modelos": ["*"],
+      "palavras_chave": ["disjuntor", "protecao"]
+    }
+  ]
+}
+```
+
+Use `modelos: ["*"]` quando o manual vale para todos os modelos. Use ids especificos, como `cool_pack`, quando o manual vale apenas para alguns modelos. Se o botao de manuais estiver marcado e nenhum manual pertinente for encontrado, a analise e bloqueada para evitar uma revisao fora do padrao sem referencia.
 
 ## Como A Analise Deve Se Comportar
 
@@ -130,12 +220,6 @@ O relatorio final deve ser direto, com:
 
 A ferramenta deve evitar chamar tudo de erro. Ela deve apontar somente o que tiver evidencia util para revisao.
 
-## Base RNC
-
-A aba `Base RNC` continua existindo para manutencao futura.
-
-Neste momento, a analise principal nao usa a base historica de RNC como referencia. O foco atual e o PDF do projeto e o prompt tecnico.
-
 ## Estrutura Das Pastas
 
 ```text
@@ -151,6 +235,15 @@ RNC Analyst\
     desktop_app.py
     requirements.txt
     .env.example
+    llm_context\
+      equipamentos.json
+      Geral.md
+      skills.md
+      FalsosPositivos.md
+      tools.md
+      modelos\
+      tools\
+        manifest.json
     prompts\
       instrucoes_base.txt
     src\

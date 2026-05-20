@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -83,6 +84,7 @@ class RncAnalystWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.context = service.create_context(BASE_DIR)
+        self.equipment_options = service.equipment_options(self.context)
         self.loaded_pdf: service.PdfLoadResult | None = None
         self.analysis_result: service.AnalysisResult | None = None
         self.active_tasks: list[TaskThread] = []
@@ -99,11 +101,8 @@ class RncAnalystWindow(QMainWindow):
 
         self.build_new_analysis_tab()
         self.build_history_tab()
-        self.build_case_base_tab()
         self.build_settings_tab()
         self.refresh_history()
-        self.refresh_case_base()
-        self.start_background_index()
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.shutdown_tasks)
@@ -134,6 +133,19 @@ class RncAnalystWindow(QMainWindow):
         file_row.addWidget(self.select_pdf_button)
         file_row.addWidget(self.file_label, stretch=1)
         layout.addLayout(file_row)
+
+        equipment_row = QHBoxLayout()
+        equipment_row.addWidget(QLabel("Modelo do equipamento"))
+        self.equipment_combo = QComboBox()
+        self.equipment_combo.addItem("Selecione o modelo", "")
+        for option in self.equipment_options:
+            self.equipment_combo.addItem(option.name, option.id)
+        self.equipment_combo.currentIndexChanged.connect(self.update_analyze_button)
+        equipment_row.addWidget(self.equipment_combo, stretch=1)
+        layout.addLayout(equipment_row)
+
+        self.use_tools_check = QCheckBox("Projeto fora do padrao - consultar manuais")
+        layout.addWidget(self.use_tools_check)
 
         layout.addWidget(self.section_label("2. Leitura automatica"))
         self.status_label = QLabel("Selecione um PDF para iniciar.")
@@ -197,42 +209,19 @@ class RncAnalystWindow(QMainWindow):
         refresh = QPushButton("Atualizar historico")
         refresh.clicked.connect(self.refresh_history)
         row.addWidget(refresh)
+        export = QPushButton("Exportar Excel")
+        export.clicked.connect(self.export_history_excel)
+        row.addWidget(export)
         row.addStretch(1)
         layout.addLayout(row)
-        self.history_table = QTableWidget(0, 8)
+        self.history_table = QTableWidget(0, 9)
         self.history_table.setHorizontalHeaderLabels(
-            ["ID", "Data", "Arquivo", "Cliente", "Documento", "Status", "PDF", "Excel"]
+            ["ID", "Data", "Arquivo", "Cliente", "Documento", "Equipamento", "Status", "PDF", "Excel"]
         )
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.history_table.cellDoubleClicked.connect(self.open_history_file)
         layout.addWidget(self.history_table)
         self.tabs.addTab(page, "Historico")
-
-    def build_case_base_tab(self) -> None:
-        page = QWidget()
-        page.setObjectName("Page")
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(22, 18, 22, 18)
-        self.case_status_label = QLabel("Base RNC: verificando...")
-        self.case_status_label.setObjectName("StatusBox")
-        layout.addWidget(self.case_status_label)
-        row = QHBoxLayout()
-        reindex = QPushButton("Reindexar base")
-        reindex.clicked.connect(self.confirm_reindex)
-        self.fill_metadata_check = QCheckBox("Preencher campos vazios em metadata.json existentes")
-        self.fill_metadata_check.setChecked(True)
-        metadata = QPushButton("Gerar metadados e reindexar")
-        metadata.clicked.connect(self.confirm_metadata)
-        row.addWidget(reindex)
-        row.addWidget(metadata)
-        row.addWidget(self.fill_metadata_check)
-        row.addStretch(1)
-        layout.addLayout(row)
-        self.case_table = QTableWidget(0, 3)
-        self.case_table.setHorizontalHeaderLabels(["Caso", "Status", "Pasta"])
-        self.case_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        layout.addWidget(self.case_table)
-        self.tabs.addTab(page, "Base RNC")
 
     def build_settings_tab(self) -> None:
         page = QWidget()
@@ -269,7 +258,7 @@ class RncAnalystWindow(QMainWindow):
         prompt_preview_row.addWidget(self.prompt_preview_button)
         prompt_preview_row.addStretch(1)
         layout.addLayout(prompt_preview_row)
-        preview_help = QLabel("Mostra exatamente o SYSTEM e o USER prompt que serao enviados para o modelo, usando o prompt base salvo.")
+        preview_help = QLabel("Mostra exatamente o SYSTEM e o USER prompt que serao enviados para o modelo, usando o contexto salvo.")
         preview_help.setObjectName("Hint")
         preview_help.setWordWrap(True)
         layout.addWidget(preview_help)
@@ -279,7 +268,7 @@ class RncAnalystWindow(QMainWindow):
         self.effective_prompt_preview.setMinimumHeight(180)
         layout.addWidget(self.effective_prompt_preview, stretch=1)
 
-        layout.addWidget(self.section_label("Prompt base editavel"))
+        layout.addWidget(self.section_label("Contexto geral editavel"))
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setPlainText(service.load_prompt(self.context))
         layout.addWidget(self.prompt_edit, stretch=1)
@@ -297,7 +286,7 @@ class RncAnalystWindow(QMainWindow):
                 f"OPENAI_API_KEY: {api_state}",
                 f"Banco SQLite: {self.context.db_path}",
                 f"Relatorios: {self.context.runtime_dirs['reports']}",
-                f"Base RNC: {self.context.case_base_paths['knowledge_base']}",
+                f"Contexto LLM: {self.context.base_dir / 'llm_context'}",
             ]
         )
 
@@ -308,6 +297,20 @@ class RncAnalystWindow(QMainWindow):
         path = Path(file_name)
         self.set_busy("Lendo PDF...")
         self.run_task(lambda: service.load_pdf(path), self.on_pdf_loaded, self.on_task_error)
+
+    def current_analysis_options(self) -> service.AnalysisOptions | None:
+        equipment_model = str(self.equipment_combo.currentData() or "").strip()
+        if not equipment_model:
+            return None
+        return service.AnalysisOptions(
+            equipment_model=equipment_model,
+            use_tools=self.use_tools_check.isChecked(),
+        )
+
+    def update_analyze_button(self) -> None:
+        has_pdf = self.loaded_pdf is not None
+        has_equipment = bool(str(self.equipment_combo.currentData() or "").strip())
+        self.analyze_button.setEnabled(has_pdf and has_equipment)
 
     def on_pdf_loaded(self, loaded: service.PdfLoadResult) -> None:
         self.loaded_pdf = loaded
@@ -326,17 +329,22 @@ class RncAnalystWindow(QMainWindow):
             f"projeto={inferred.get('projeto') or 'nao identificado'} | "
             f"revisao={inferred.get('revisao') or 'nao identificado'}"
         )
-        self.analyze_button.setEnabled(True)
+        self.update_analyze_button()
         self.set_report_buttons(False)
         self.result_text.clear()
 
     def analyze_project(self) -> None:
         if self.loaded_pdf is None:
             return
+        options = self.current_analysis_options()
+        if options is None:
+            self.show_warning("Modelo obrigatorio", "Selecione o modelo do equipamento antes de analisar.")
+            self.update_analyze_button()
+            return
         self.set_progress(0, "Preparando analise")
         self.analyze_button.setEnabled(False)
         self.run_task(
-            lambda progress: service.run_analysis(self.context, self.loaded_pdf, progress=progress),
+            lambda progress: service.run_analysis(self.context, self.loaded_pdf, options, progress=progress),
             self.on_analysis_done,
             self.on_task_error,
             with_progress=True,
@@ -351,7 +359,7 @@ class RncAnalystWindow(QMainWindow):
             self.set_progress(100, "Pre-analise local concluida; IA externa indisponivel")
         else:
             self.set_progress(100, "Analise concluida")
-        self.analyze_button.setEnabled(True)
+        self.update_analyze_button()
         self.set_report_buttons(True)
         lines = [
             f"Analise registrada com ID {result.analysis_id}.",
@@ -365,45 +373,8 @@ class RncAnalystWindow(QMainWindow):
         self.refresh_history()
         self.open_report("pdf")
 
-    def start_background_index(self) -> None:
-        self.case_status_label.setText("Base RNC: verificando em segundo plano...")
-        self.run_task(lambda: service.index_case_base(self.context), self.on_index_done, self.on_index_error)
-
-    def on_index_done(self, result: dict[str, Any]) -> None:
-        self.case_status_label.setText(
-            "Base RNC: "
-            f"{result.get('ok', 0)} ok, {result.get('warning', 0)} alerta, "
-            f"{result.get('error', 0)} erro, {result.get('pruned', 0)} removido."
-        )
-        self.refresh_case_base()
-
-    def on_index_error(self, message: str) -> None:
-        self.case_status_label.setText(f"Base RNC: falha na indexacao. {message}")
-
-    def confirm_reindex(self) -> None:
-        if self.ask_confirm("Reindexar a base RNC agora?"):
-            self.set_busy("Reindexando base RNC...")
-            self.run_task(lambda: service.index_case_base(self.context), self.on_index_done, self.on_task_error)
-
-    def confirm_metadata(self) -> None:
-        if self.ask_confirm("Gerar metadados e reindexar a base RNC agora?"):
-            fill = self.fill_metadata_check.isChecked()
-            self.set_busy("Gerando metadados...")
-            self.run_task(lambda: service.generate_metadata_and_reindex(self.context, fill), self.on_metadata_done, self.on_task_error)
-
-    def on_metadata_done(self, result: dict[str, Any]) -> None:
-        self.set_idle()
-        metadata = result.get("metadata", {})
-        self.show_info(
-            "Metadados",
-            "Metadados processados: "
-            f"{metadata.get('created', 0)} criados, {metadata.get('updated', 0)} atualizados, "
-            f"{metadata.get('skipped', 0)} ignorados, {metadata.get('error', 0)} erro(s).",
-        )
-        self.on_index_done(result.get("index", {}))
-
     def confirm_save_prompt(self) -> None:
-        if not self.ask_confirm("Salvar alteracoes no prompt base?"):
+        if not self.ask_confirm("Salvar alteracoes no contexto geral?"):
             return
         digest = service.save_prompt(self.context, self.prompt_edit.toPlainText())
         self.show_info("Prompt salvo", f"Prompt salvo. Hash: {digest}")
@@ -429,8 +400,15 @@ class RncAnalystWindow(QMainWindow):
                 "Selecione um PDF na aba Nova analise para montar o prompt efetivo da proxima analise.",
             )
             return
+        options = self.current_analysis_options()
+        if options is None:
+            self.show_warning(
+                "Prompt efetivo",
+                "Selecione o modelo do equipamento na aba Nova analise para montar o prompt efetivo.",
+            )
+            return
         try:
-            prompt = service.build_effective_prompt(self.context, self.loaded_pdf)
+            prompt = service.build_effective_prompt(self.context, self.loaded_pdf, options)
         except Exception as exc:
             self.show_warning("Prompt efetivo", f"Nao foi possivel montar o prompt efetivo.\n\n{exc}")
             return
@@ -447,6 +425,7 @@ class RncAnalystWindow(QMainWindow):
                 row.get("pdf_name", ""),
                 row.get("customer", ""),
                 row.get("document", ""),
+                row.get("equipment_model", ""),
                 row.get("status", ""),
                 row.get("report_pdf_path", ""),
                 row.get("report_xlsx_path", ""),
@@ -456,21 +435,32 @@ class RncAnalystWindow(QMainWindow):
                 item.setFlags(item.flags() ^ Qt.ItemIsEditable)
                 self.history_table.setItem(row_index, column, item)
 
-    def refresh_case_base(self) -> None:
-        overview = service.case_base_overview(self.context)
-        indexed_by_id = {row.get("case_id"): row for row in overview["indexed_cases"]}
-        case_dirs = overview["case_dirs"]
-        self.case_table.setRowCount(len(case_dirs))
-        for row_index, path in enumerate(case_dirs):
-            indexed = indexed_by_id.get(path.name, {})
-            values = [path.name, indexed.get("status", "nao indexado"), str(path)]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(str(value or ""))
-                item.setFlags(item.flags() ^ Qt.ItemIsEditable)
-                self.case_table.setItem(row_index, column, item)
+    def export_history_excel(self) -> None:
+        default_name = f"historico_rnc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        default_path = self.context.runtime_dirs["reports"] / default_name
+        file_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar historico em Excel",
+            str(default_path),
+            "Excel (*.xlsx)",
+        )
+        if not file_name:
+            return
+        path = Path(file_name)
+        if path.suffix.lower() != ".xlsx":
+            path = path.with_suffix(".xlsx")
+        try:
+            result = service.export_history_excel(self.context, path)
+        except Exception as exc:
+            self.show_warning("Exportar historico", f"Nao foi possivel exportar o historico.\n\n{exc}")
+            return
+        self.show_info(
+            "Historico exportado",
+            f"Planilha exportada com {result['rows']} registro(s):\n{path}",
+        )
 
     def open_history_file(self, row: int, column: int) -> None:
-        if column not in {6, 7}:
+        if column not in {7, 8}:
             return
         item = self.history_table.item(row, column)
         if item:
@@ -522,7 +512,7 @@ class RncAnalystWindow(QMainWindow):
         self.stop_ai_progress()
         self.status_label.setText(f"{self.last_progress_message or 'Falha na operacao'} - erro")
         self.progress.setVisible(self.last_progress_percent > 0)
-        self.analyze_button.setEnabled(self.loaded_pdf is not None)
+        self.update_analyze_button()
         self.show_warning("RNC Analyst", f"{message}\n\nConfira o arquivo e tente novamente.")
 
     def on_progress_changed(self, percent: int, message: str) -> None:

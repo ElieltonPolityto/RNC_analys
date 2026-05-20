@@ -1,16 +1,62 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from openpyxl import load_workbook
 from pypdf import PdfReader
 
 from src import desktop_service
+from src.database import save_analysis
 from src.prompts import build_review_prompt
-from src.report_writer import PDF_FINDINGS_LIMIT, select_pdf_findings, write_pdf
+from src.report_writer import PDF_FINDINGS_LIMIT, select_pdf_findings, write_pdf, write_reports
+
+
+def write_llm_context_fixture(base_dir: Path, *, include_tools: bool = True) -> None:
+    context_dir = base_dir / "llm_context"
+    models_dir = context_dir / "modelos"
+    tools_dir = context_dir / "tools"
+    models_dir.mkdir(parents=True)
+    tools_dir.mkdir(parents=True)
+    (context_dir / "equipamentos.json").write_text(
+        json.dumps(
+            {
+                "equipamentos": [
+                    {"id": "cool_pack", "nome": "Cool Pack", "arquivo": "modelos/cool_pack.md"},
+                    {"id": "eco_pack", "nome": "Eco Pack", "arquivo": "modelos/eco_pack.md"},
+                    {"id": "rackhouse", "nome": "Rackhouse", "arquivo": "modelos/rackhouse.md"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "Geral.md").write_text("Regra geral fixture.", encoding="utf-8")
+    (context_dir / "skills.md").write_text("Skill fixture.", encoding="utf-8")
+    (context_dir / "FalsosPositivos.md").write_text("Nao apontar padrao interno fixture.", encoding="utf-8")
+    (context_dir / "tools.md").write_text("Use catalogos somente quando autorizados.", encoding="utf-8")
+    (models_dir / "cool_pack.md").write_text("Contexto exclusivo Cool Pack.", encoding="utf-8")
+    (models_dir / "eco_pack.md").write_text("Contexto exclusivo Eco Pack.", encoding="utf-8")
+    (models_dir / "rackhouse.md").write_text("Contexto exclusivo Rackhouse.", encoding="utf-8")
+    (tools_dir / "disjuntores.md").write_text("Catalogo de disjuntores fixture.", encoding="utf-8")
+    manifest = {
+        "tools": [
+            {
+                "id": "disjuntores",
+                "arquivo": "disjuntores.md",
+                "nome": "Disjuntores",
+                "modelos": ["cool_pack"],
+                "palavras_chave": ["disjuntor"],
+            }
+        ]
+        if include_tools
+        else []
+    }
+    (tools_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
 
 class DesktopUiContractTests(unittest.TestCase):
@@ -29,6 +75,132 @@ class DesktopUiContractTests(unittest.TestCase):
         self.assertEqual(project_info["pedido"], "")
         self.assertEqual(project_info["projeto"], "")
         self.assertEqual(project_info["revisao"], "")
+
+    def test_equipment_catalog_loads_editable_models(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
+            context = desktop_service.create_context(base_dir)
+
+            options = desktop_service.equipment_options(context)
+
+        names = [option.name for option in options]
+        self.assertIn("Cool Pack", names)
+        self.assertIn("Eco Pack", names)
+        self.assertIn("Rackhouse", names)
+
+    def test_equipment_catalog_rejects_missing_model_file(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
+            (base_dir / "llm_context" / "modelos" / "cool_pack.md").unlink()
+            context = desktop_service.create_context(base_dir)
+
+            with self.assertRaisesRegex(ValueError, "Arquivo de contexto nao encontrado"):
+                desktop_service.equipment_options(context)
+
+    def test_effective_prompt_uses_only_selected_equipment_context_without_tools(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
+            context = desktop_service.create_context(base_dir)
+            loaded = desktop_service.PdfLoadResult(
+                path=base_dir / "cool.pdf",
+                bytes_data=b"pdf",
+                summary={
+                    "file_name": "cool.pdf",
+                    "pages_count": 1,
+                    "inferred": {"documento": "CP-01"},
+                    "pages": [],
+                    "critical_pages": [],
+                    "warnings": [],
+                    "text": "Projeto com disjuntor.",
+                },
+            )
+            options = desktop_service.AnalysisOptions(equipment_model="cool_pack", use_tools=False)
+
+            prompt = desktop_service.build_effective_prompt(context, loaded, options)
+
+        self.assertIn("Modelo do equipamento: Cool Pack", prompt)
+        self.assertIn("Regra geral fixture.", prompt)
+        self.assertIn("Skill fixture.", prompt)
+        self.assertIn("Nao apontar padrao interno fixture.", prompt)
+        self.assertIn("Contexto exclusivo Cool Pack.", prompt)
+        self.assertNotIn("Contexto exclusivo Eco Pack.", prompt)
+        self.assertNotIn("Catalogo de disjuntores fixture.", prompt)
+        self.assertIn("llm_context/modelos/cool_pack.md", prompt)
+
+    def test_effective_prompt_includes_matching_tools_only_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
+            context = desktop_service.create_context(base_dir)
+            loaded = desktop_service.PdfLoadResult(
+                path=base_dir / "cool.pdf",
+                bytes_data=b"pdf",
+                summary={
+                    "file_name": "cool.pdf",
+                    "pages_count": 1,
+                    "inferred": {},
+                    "pages": [],
+                    "critical_pages": [],
+                    "warnings": [],
+                    "text": "Conferir disjuntor geral.",
+                },
+            )
+            options = desktop_service.AnalysisOptions(equipment_model="cool_pack", use_tools=True)
+
+            prompt = desktop_service.build_effective_prompt(context, loaded, options)
+
+        self.assertIn("Use catalogos somente quando autorizados.", prompt)
+        self.assertIn("Catalogo de disjuntores fixture.", prompt)
+        self.assertIn("llm_context/tools/disjuntores.md", prompt)
+
+    def test_requested_tools_block_when_no_manual_matches(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
+            context = desktop_service.create_context(base_dir)
+            loaded = desktop_service.PdfLoadResult(
+                path=base_dir / "cool.pdf",
+                bytes_data=b"pdf",
+                summary={
+                    "file_name": "cool.pdf",
+                    "pages_count": 1,
+                    "inferred": {},
+                    "pages": [],
+                    "critical_pages": [],
+                    "warnings": [],
+                    "text": "Projeto sem palavra-chave de manual.",
+                },
+            )
+            options = desktop_service.AnalysisOptions(equipment_model="cool_pack", use_tools=True)
+
+            with self.assertRaisesRegex(ValueError, "Nenhum manual pertinente"):
+                desktop_service.build_effective_prompt(context, loaded, options)
+
+    def test_invalid_equipment_model_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
+            context = desktop_service.create_context(base_dir)
+            loaded = desktop_service.PdfLoadResult(
+                path=base_dir / "cool.pdf",
+                bytes_data=b"pdf",
+                summary={
+                    "file_name": "cool.pdf",
+                    "pages_count": 1,
+                    "inferred": {},
+                    "pages": [],
+                    "critical_pages": [],
+                    "warnings": [],
+                    "text": "Material extraido.",
+                },
+            )
+            options = desktop_service.AnalysisOptions(equipment_model="nao_existe", use_tools=False)
+
+            with self.assertRaisesRegex(ValueError, "Modelo de equipamento invalido"):
+                desktop_service.build_effective_prompt(context, loaded, options)
 
     def test_saves_openai_model_to_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -102,6 +274,52 @@ class DesktopUiContractTests(unittest.TestCase):
         self.assertNotIn("Usuario\n", text)
         self.assertNotIn("Gerado em\n", text)
 
+    def test_reports_include_equipment_and_context_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            paths = write_reports(
+                reports_dir=base_dir,
+                project_info={
+                    "usuario": "Ana",
+                    "cliente": "Cliente",
+                    "documento": "CP-01",
+                    "pedido": "",
+                    "projeto": "",
+                    "revisao": "",
+                    "modelo_equipamento": "Cool Pack",
+                },
+                result={
+                    "generated_at": "2026-05-07T14:35:00",
+                    "provider": "OpenAI",
+                    "model": "gpt-5-mini",
+                    "status": "concluido",
+                    "overall_risk": "baixo",
+                    "findings_count": 0,
+                    "max_severity": "baixa",
+                    "summary": "Resumo.",
+                    "findings": [],
+                    "related_cases": [],
+                    "related_cases_count": 0,
+                    "used_tools": True,
+                    "context_files": ["llm_context/Geral.md", "llm_context/modelos/cool_pack.md"],
+                },
+                pdf_summary={"file_name": "cool.pdf", "pages_count": 1, "inferred": {}, "critical_pages": [], "warnings": []},
+                original_file_name="cool.pdf",
+            )
+
+            md_text = paths["md"].read_text(encoding="utf-8")
+            workbook = load_workbook(paths["xlsx"], read_only=True)
+            resumo_rows = list(workbook["Resumo"].iter_rows(values_only=True))
+            pdf_text_output = "\n".join(page.extract_text() or "" for page in PdfReader(str(paths["pdf"])).pages)
+
+        self.assertIn("- Modelo do equipamento: Cool Pack", md_text)
+        self.assertIn("- Consultou manuais: sim", md_text)
+        self.assertIn("llm_context/modelos/cool_pack.md", md_text)
+        self.assertIn(("modelo_equipamento", "Cool Pack"), resumo_rows)
+        self.assertIn(("consultou_manuais", "sim"), resumo_rows)
+        self.assertIn("Modelo do equipamento", pdf_text_output)
+        self.assertIn("Cool Pack", pdf_text_output)
+
     def test_pdf_allows_up_to_twenty_findings_when_needed(self) -> None:
         findings = [
             {"severity": "baixa", "category": f"Item {index}", "page": index}
@@ -130,6 +348,7 @@ class DesktopUiContractTests(unittest.TestCase):
     def test_effective_prompt_preview_matches_analysis_prompt_contract(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
             context = desktop_service.create_context(base_dir)
             desktop_service.save_prompt(context, "Instrucao local.")
             loaded = desktop_service.PdfLoadResult(
@@ -152,8 +371,9 @@ class DesktopUiContractTests(unittest.TestCase):
                     "text": "Material extraido.",
                 },
             )
+            options = desktop_service.AnalysisOptions(equipment_model="cool_pack", use_tools=False)
 
-            prompt = desktop_service.build_effective_prompt(context, loaded)
+            prompt = desktop_service.build_effective_prompt(context, loaded, options)
 
         self.assertIn("=== SYSTEM INSTRUCTIONS ===", prompt)
         self.assertIn("=== USER PROMPT ===", prompt)
@@ -178,6 +398,7 @@ class DesktopUiContractTests(unittest.TestCase):
     def test_desktop_analysis_progress_and_no_similar_cases(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
             context = desktop_service.create_context(base_dir)
             pdf_path = base_dir / "projeto.pdf"
             pdf_path.write_bytes(b"pdf")
@@ -191,8 +412,10 @@ class DesktopUiContractTests(unittest.TestCase):
                     "pages": [],
                     "critical_pages": [],
                     "warnings": [],
+                    "text": "Projeto Cool Pack.",
                 },
             )
+            options = desktop_service.AnalysisOptions(equipment_model="cool_pack", use_tools=False)
             progress_events: list[tuple[int, str]] = []
 
             with patch.dict(os.environ, {}, clear=True), patch(
@@ -222,6 +445,7 @@ class DesktopUiContractTests(unittest.TestCase):
                 desktop_service.run_analysis(
                     context,
                     loaded,
+                    options,
                     progress=lambda percent, message: progress_events.append((percent, message)),
                 )
 
@@ -230,6 +454,115 @@ class DesktopUiContractTests(unittest.TestCase):
         self.assertEqual(percents[-1], 100)
         self.assertEqual(percents, sorted(percents))
         self.assertEqual(mocked_analyze.call_args.kwargs["similar_cases"], [])
+        self.assertEqual(mocked_analyze.call_args.kwargs["project_info"]["modelo_equipamento"], "Cool Pack")
+        self.assertIn("Contexto exclusivo Cool Pack.", mocked_analyze.call_args.kwargs["base_instructions"])
+
+    def test_desktop_analysis_persists_equipment_context_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            write_llm_context_fixture(base_dir)
+            context = desktop_service.create_context(base_dir)
+            loaded = desktop_service.PdfLoadResult(
+                path=base_dir / "projeto.pdf",
+                bytes_data=b"pdf",
+                summary={
+                    "file_name": "projeto.pdf",
+                    "pages_count": 1,
+                    "inferred": {},
+                    "pages": [],
+                    "critical_pages": [],
+                    "warnings": [],
+                    "text": "Projeto Cool Pack.",
+                },
+            )
+            options = desktop_service.AnalysisOptions(equipment_model="cool_pack", use_tools=False)
+
+            with patch.dict(os.environ, {}, clear=True), patch(
+                "src.desktop_service.analyze_project",
+                return_value={
+                    "generated_at": "2026-05-07T14:35:00",
+                    "provider": "Modelo local",
+                    "model": "local",
+                    "status": "pre_analise_local",
+                    "overall_risk": "baixo",
+                    "findings": [],
+                    "provider_error": "",
+                    "related_cases": [],
+                    "related_cases_count": 0,
+                    "findings_count": 0,
+                    "max_severity": "baixa",
+                    "summary": "ok",
+                },
+            ), patch(
+                "src.desktop_service.write_reports",
+                return_value={
+                    "pdf": base_dir / "relatorio.pdf",
+                    "xlsx": base_dir / "relatorio.xlsx",
+                    "md": base_dir / "relatorio.md",
+                },
+            ):
+                desktop_service.run_analysis(context, loaded, options)
+
+            row = desktop_service.history_rows(context)[0]
+
+        self.assertEqual(row["equipment_model"], "Cool Pack")
+        self.assertEqual(row["used_tools"], 0)
+        context_files = json.loads(row["context_files_json"])
+        self.assertIn("llm_context/Geral.md", context_files)
+        self.assertIn("llm_context/modelos/cool_pack.md", context_files)
+
+    def test_desktop_app_does_not_show_base_rnc_tab(self) -> None:
+        desktop_app = Path(__file__).resolve().parents[1] / "desktop_app.py"
+        source = desktop_app.read_text(encoding="utf-8")
+
+        self.assertNotIn('self.tabs.addTab(page, "Base RNC")', source)
+        self.assertNotIn("self.build_case_base_tab()", source)
+        self.assertNotIn("self.start_background_index()", source)
+        self.assertNotIn("Base RNC:", source)
+
+    def test_history_can_be_exported_to_excel(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            base_dir = Path(tmp)
+            context = desktop_service.create_context(base_dir)
+            save_analysis(
+                context.db_path,
+                {
+                    "created_at": "2026-05-20T12:30:00",
+                    "user_name": "Ana",
+                    "customer": "Cliente A",
+                    "document": "DOC-01",
+                    "project": "PRJ",
+                    "revision": "R0",
+                    "equipment_model": "Cool Pack",
+                    "used_tools": 1,
+                    "context_files_json": json.dumps(["llm_context/Geral.md"], ensure_ascii=False),
+                    "provider": "OpenAI",
+                    "model": "gpt-5-mini",
+                    "status": "concluido",
+                    "overall_risk": "baixo",
+                    "findings_count": 2,
+                    "max_severity": "media",
+                    "pdf_name": "projeto.pdf",
+                    "upload_path": "uploads/projeto.pdf",
+                    "report_xlsx_path": "reports/projeto.xlsx",
+                    "report_md_path": "reports/projeto.md",
+                    "report_pdf_path": "reports/projeto.pdf",
+                    "related_cases_json": "[]",
+                    "base_prompt_hash": "abc",
+                    "base_prompt_path": "llm_context/Geral.md",
+                    "result_json": "{}",
+                    "pdf_summary_json": "{}",
+                },
+            )
+            export_path = base_dir / "historico.xlsx"
+
+            result = desktop_service.export_history_excel(context, export_path)
+            workbook = load_workbook(export_path, read_only=True)
+            rows = list(workbook["Historico"].iter_rows(values_only=True))
+
+        self.assertEqual(result["rows"], 1)
+        self.assertEqual(rows[0][:9], ("ID", "Data", "Arquivo", "Cliente", "Documento", "Equipamento", "Consultou manuais", "Status", "PDF"))
+        self.assertIn(("1", "2026-05-20T12:30:00", "projeto.pdf", "Cliente A", "DOC-01", "Cool Pack", "sim", "concluido", "reports/projeto.pdf", "reports/projeto.xlsx"), rows)
 
     def test_desktop_analysis_does_not_use_indeterminate_progress(self) -> None:
         desktop_app = Path(__file__).resolve().parents[1] / "desktop_app.py"

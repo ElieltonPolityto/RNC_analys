@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS analyses (
     document TEXT,
     project TEXT,
     revision TEXT,
+    equipment_model TEXT,
+    used_tools INTEGER,
+    context_files_json TEXT,
     provider TEXT,
     model TEXT,
     status TEXT,
@@ -40,6 +43,9 @@ ANALYSIS_EXTRA_COLUMNS = {
     "base_prompt_hash": "TEXT",
     "base_prompt_path": "TEXT",
     "report_pdf_path": "TEXT",
+    "equipment_model": "TEXT",
+    "used_tools": "INTEGER",
+    "context_files_json": "TEXT",
 }
 
 
@@ -80,6 +86,9 @@ def save_analysis(db_path: Path, record: dict[str, Any]) -> int:
         "document",
         "project",
         "revision",
+        "equipment_model",
+        "used_tools",
+        "context_files_json",
         "provider",
         "model",
         "status",
@@ -122,6 +131,7 @@ def list_analyses(db_path: Path, limit: int = 200) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT id, created_at, user_name, customer, document, project, revision,
+                   equipment_model, used_tools, context_files_json,
                    provider, model, status, overall_risk, findings_count,
                    max_severity, pdf_name, report_xlsx_path, report_md_path,
                    report_pdf_path, base_prompt_hash, related_cases_json

@@ -134,7 +134,7 @@ if "%NEED_INSTALL%"=="1" (
     if errorlevel 1 (
         echo Falha ao instalar dependencias.
         echo.
-        echo Verifique se este PC tem internet liberada e se o antivirus/proxy nao bloqueou o pip.
+        echo Verifique se este PC tem espaco em disco, internet liberada e se o antivirus/proxy nao bloqueou o pip.
         echo Detalhes no log:
         echo %LOG_FILE%
         echo.
